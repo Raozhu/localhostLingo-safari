@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    /* 基础重置与全局字体 */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      width: 320px;
+      padding: 20px;
+      background-color: #F9FAFB;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #374151;
+    }
+
+    /* 标题区域 (可选，增加精致感) */
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .header h1 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #111827;
+      letter-spacing: 0;
+    }
+
+    /* 表单控件组合 */
+    .select-group {
+      margin-bottom: 16px;
+      text-align: left;
+    }
+    
+    .select-group label {
+      font-size: 12px;
+      font-weight: 600;
+      display: block;
+      margin-bottom: 6px;
+      color: #6B7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    /* 现代化 Select 样式 */
+    select {
+      width: 100%;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-family: inherit;
+      color: #111827;
+      background-color: #FFFFFF;
+      border: 1px solid #D1D5DB;
+      border-radius: 10px;
+      appearance: none; /* 移除默认样式 */
+      -webkit-appearance: none;
+      cursor: pointer;
+      outline: none;
+      transition: all 0.2s ease;
+      /* 自定义右侧箭头 SVG */
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239CA3AF'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      background-size: 14px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+
+    select:hover {
+      border-color: #9CA3AF;
+    }
+
+    select:focus {
+      border-color: #3B82F6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+
+    /* 按钮基础样式 */
+    .btn-group {
+      margin-top: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px 15px;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    button:active:not(:disabled) {
+      transform: scale(0.98);
+    }
+
+    /* 主按钮：翻译 */
+    #translateBtn {
+      background-color: #111827;
+      color: #FFFFFF;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    }
+
+    #translateBtn:hover {
+      background-color: #374151;
+      box-shadow: 0 6px 8px -1px rgba(0, 0, 0, 0.1), 0 4px 6px -1px rgba(0, 0, 0, 0.06);
+    }
+
+    /* 次按钮：查看原文 */
+    #revertBtn {
+      background-color: #E5E7EB;
+      color: #374151;
+    }
+
+    #revertBtn:hover:not(:disabled) {
+      background-color: #D1D5DB;
+    }
+
+    #revertBtn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      background-color: #F3F4F6;
+      color: #9CA3AF;
+    }
+
+    /* 底部状态指示器 */
+    .status-bar {
+      margin-top: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .status-text {
+      font-size: 11px;
+      color: #9CA3AF;
+      font-weight: 500;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background-color: #9CA3AF; /* 默认灰色，代表检测中 */
+      border-radius: 50%;
+    }
+
+    .status-dot.connected {
+      background-color: #10B981; /* 翠绿色 */
+      animation: pulse 2s infinite;
+    }
+
+    .status-dot.disconnected {
+      background-color: #EF4444; /* 红色 */
+      animation: none;
+    }
+
+    /* 呼吸灯动画 */
+    @keyframes pulse {
+      0% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+      }
+      70% {
+        box-shadow: 0 0 0 5px rgba(16, 185, 129, 0);
+      }
+      100% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+      }
+    }
+  </style>
+</head>
+<body>
+  
+  <div class="header">
+    <h1>Rao oMLX 翻译</h1>
+  </div>
+
+  <div class="select-group">
+    <label>源语言 (Source)</label>
+    <select id="sourceLang">
+      <option value="auto">自动检测 (Auto)</option>
+      <option value="Simplified Chinese">中文简体</option>
+      <option value="Traditional Chinese">中文繁体</option>
+      <option value="English">英文</option>
+      <option value="Japanese">日文</option>
+      <option value="Korean">韩文</option>
+    </select>
+  </div>
+  
+  <div class="select-group">
+    <label>目标语言 (Target)</label>
+    <select id="targetLang">
+      <option value="Simplified Chinese" selected>中文简体</option>
+      <option value="Traditional Chinese">中文繁体</option>
+      <option value="English">英文</option>
+      <option value="Japanese">日文</option>
+      <option value="Korean">韩文</option>
+    </select>
+  </div>
+  
+  <div class="btn-group">
+    <button id="translateBtn">翻译本页</button>
+    <button id="revertBtn" disabled>查看原文</button>
+  </div>
+
+  <!-- 底部状态指示器 -->
+  <div class="status-bar">
+    <div id="statusDot" class="status-dot"></div>
+    <span id="statusText" class="status-text">检测 oMLX 状态...</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

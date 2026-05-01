@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Rao oMLX Translate",
+  "description": "Use a local oMLX translation model to translate the current Safari page.",
+  "version": "1.5",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://127.0.0.1:9510/*", "http://localhost:9510/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "commands": {
+    "toggle-translation": {
+      "suggested_key": {
+        "default": "Alt+A",
+        "mac": "Alt+A"
+      },
+      "description": "切换翻译/原文状态"
+    }
+  }
+}

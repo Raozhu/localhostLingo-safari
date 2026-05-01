@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rao oMLX Translate - Quality Test</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            line-height: 1.65;
+            color: #1f2937;
+            background: #f6f7f9;
+        }
+
+        main {
+            width: min(980px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 32px 0 56px;
+        }
+
+        header {
+            margin-bottom: 28px;
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: 28px;
+            line-height: 1.2;
+            letter-spacing: 0;
+        }
+
+        h2 {
+            margin: 0 0 12px;
+            font-size: 18px;
+            letter-spacing: 0;
+        }
+
+        p {
+            margin: 0 0 12px;
+        }
+
+        section {
+            margin-bottom: 20px;
+            padding: 20px;
+            border: 1px solid #d9dee7;
+            border-radius: 8px;
+            background: #ffffff;
+        }
+
+        .hint {
+            color: #6b7280;
+            font-size: 14px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 14px;
+        }
+
+        .sample {
+            padding: 14px;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            background: #fbfcfe;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 8px;
+        }
+
+        th,
+        td {
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th {
+            background: #f3f4f6;
+        }
+
+        code,
+        pre {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            background: #eef2f7;
+            color: #9f1239;
+        }
+
+        code {
+            padding: 2px 5px;
+            border-radius: 4px;
+        }
+
+        pre {
+            overflow: auto;
+            padding: 12px;
+            border-radius: 6px;
+            color: #111827;
+        }
+
+        blockquote {
+            margin: 0;
+            padding-left: 14px;
+            border-left: 4px solid #9ca3af;
+            color: #374151;
+        }
+    </style>
+</head>
+<body>
+<main>
+    <header>
+        <h1>Rao oMLX Translate - Quality Test</h1>
+        <p class="hint">Use this page to compare translation quality across different content types. Code blocks, notranslate areas, URLs, emails, and pure numbers should stay unchanged.</p>
+    </header>
+
+    <section>
+        <h2>1. Short UI Copy</h2>
+        <div class="grid">
+            <div class="sample">Save changes</div>
+            <div class="sample">Try again later</div>
+            <div class="sample">Your session has expired. Please sign in again.</div>
+            <div class="sample">No results found. Adjust your filters and search again.</div>
+            <div class="sample">This action cannot be undone.</div>
+            <div class="sample">Upload failed because the file is larger than 25 MB.</div>
+        </div>
+    </section>
+
+    <section>
+        <h2>2. Everyday Paragraphs</h2>
+        <p>The meeting started ten minutes late, but the team still managed to agree on the next milestone and assign owners for each open issue.</p>
+        <p>She opened the window to let in some fresh air, then sat down with a cup of coffee and reviewed the notes from yesterday's interview.</p>
+        <p>If the weather is good this weekend, we might take the train to the coast and spend the afternoon walking along the beach.</p>
+    </section>
+
+    <section>
+        <h2>3. Idioms, Tone, and Colloquial Text</h2>
+        <p>We were almost ready to ship, but the last bug threw a wrench in the works.</p>
+        <p>Honestly, this feature looked simple on paper, but it turned into a rabbit hole once we started testing edge cases.</p>
+        <p>I get why people like the new design, but for power users it adds too many clicks.</p>
+        <p>That demo was rough around the edges, but the core idea is solid.</p>
+    </section>
+
+    <section>
+        <h2>4. Technical Text</h2>
+        <p>The extension sends batched prompts to the local oMLX server and restores the original text nodes when the user switches back to the source page.</p>
+        <p>The API returns a list of choices, and each item includes an index that must be used to preserve the original order of the prompts.</p>
+        <p>When the request fails, the UI should display a recoverable error instead of replacing the page text with an empty response.</p>
+        <p>Keep terms such as <code>service worker</code>, <code>content script</code>, <code>manifest.json</code>, and <code>Authorization: Bearer</code> readable after translation.</p>
+    </section>
+
+    <section>
+        <h2>5. Product and Business Text</h2>
+        <p>Our early adopters are not looking for more dashboards. They want a faster way to understand what changed, why it matters, and what they should do next.</p>
+        <p>The highest-risk assumption is that users will trust an automated recommendation before they can inspect the evidence behind it.</p>
+        <p>If activation does not improve within two release cycles, we should pause the feature and revisit the onboarding flow.</p>
+    </section>
+
+    <section>
+        <h2>6. Academic and Formal Text</h2>
+        <p>The preliminary findings suggest a moderate correlation between repeated practice and improved task completion, although the sample size remains insufficient for a definitive conclusion.</p>
+        <p>Future work should examine whether the observed behavioral changes persist after the intervention is removed.</p>
+        <blockquote>The central question is not whether the model can produce fluent output, but whether users can rely on that output in context-sensitive decisions.</blockquote>
+    </section>
+
+    <section>
+        <h2>7. Table Content</h2>
+        <table>
+            <thead>
+            <tr>
+                <th>Scenario</th>
+                <th>Expected Behavior</th>
+                <th>Quality Notes</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr>
+                <td>Short label</td>
+                <td>The translation should be brief and natural.</td>
+                <td>Avoid adding explanations that were not in the source.</td>
+            </tr>
+            <tr>
+                <td>Long paragraph</td>
+                <td>The translation should preserve meaning across sentence boundaries.</td>
+                <td>Check whether pronouns and references remain clear.</td>
+            </tr>
+            <tr>
+                <td>Mixed terminology</td>
+                <td>Technical nouns should stay recognizable.</td>
+                <td>Watch for over-translation of product names or code terms.</td>
+            </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <section>
+        <h2>8. Mixed Language and Named Entities</h2>
+        <p>Apple released Safari Web Extensions so developers can reuse much of their existing WebExtension code while still packaging it through Xcode.</p>
+        <p>The local model is called MiLMMT-mlx-8bit, and the server runs at http://127.0.0.1:9510.</p>
+        <p>Contact support@example.com if the upload fails again after 2026-05-01 18:30.</p>
+        <p>The user said, "I do not want a generic summary. I need the exact tradeoff."</p>
+    </section>
+
+    <section>
+        <h2>9. Chinese Source Text</h2>
+        <p>这个页面用来测试本地翻译模型在不同文本类型下的表现，包括短句、长段落、技术说明、口语表达和表格内容。</p>
+        <p>如果源语言选择“自动检测”，插件应该先判断这段话是中文，再按目标语言生成对应的翻译提示词。</p>
+        <p>好的翻译不只是逐字替换，还需要保留语气、上下文和关键信息的优先级。</p>
+    </section>
+
+    <section>
+        <h2>10. Japanese and Korean Source Text</h2>
+        <p>このページは、さまざまな文章タイプで翻訳品質を確認するためのテストページです。</p>
+        <p>ユーザーが元の文章に戻したとき、DOM 構造を壊さずに正確に復元される必要があります。</p>
+        <p>이 페이지는 짧은 문장, 긴 문단, 기술 문서, 표 내용을 모두 테스트하기 위해 만들어졌습니다.</p>
+        <p>번역 결과가 자연스러운지, 그리고 중요한 용어가 사라지지 않는지 확인하세요.</p>
+    </section>
+
+    <section>
+        <h2>11. Should Not Translate</h2>
+        <p>The next paragraph has <code>notranslate</code> and should remain unchanged.</p>
+        <p class="notranslate">This paragraph must not be translated because it uses the notranslate class.</p>
+        <p translate="no">This paragraph must not be translated because it uses translate="no".</p>
+        <pre><code>function translate(text) {
+    return fetch("/v1/completions", {
+        method: "POST",
+        body: JSON.stringify({ prompt: text })
+    });
+}</code></pre>
+        <p>Pure URL: https://developer.apple.com/documentation/safariservices</p>
+        <p>Pure email: support@example.com</p>
+        <p>Pure numbers: 2026-05-01 18:30, $1,234.56, 42%</p>
+    </section>
+</main>
+</body>
+</html>

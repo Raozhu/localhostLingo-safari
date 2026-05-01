@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rao本地翻译 - 测试页面</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: 0 auto; color: #333; }
+        h1, h2 { color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 30px; }
+        .section { margin-bottom: 40px; background: #f9f9f9; padding: 20px; border-radius: 8px; border: 1px solid #ddd; }
+        pre, code { background-color: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #e83e8c; }
+        pre { padding: 15px; overflow-x: auto; color: #333; }
+        .hidden { display: none; }
+        .transparent { opacity: 0; }
+        .zero-size { width: 0; height: 0; overflow: hidden; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .material-icons { font-family: 'Material Icons'; }
+    </style>
+</head>
+<body>
+
+    <h1>Rao本地翻译 - 综合测试页面</h1>
+    <p>This page is designed to test all edge cases and features of the extension.</p>
+
+    <div class="section">
+        <h2>1. 基础文本测试 (Basic Text Translation)</h2>
+        <p>This is a simple paragraph that should be translated normally.</p>
+        <p>Here is another paragraph with <strong>bold text</strong>, <em>italic text</em>, and a <a href="#">hyperlink</a> inside it to test inline elements.</p>
+        <ul>
+            <li>First item in an unordered list.</li>
+            <li>Second item, which is slightly longer to test sentence boundaries.</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>2. 不同文本类型测试 (Text Type Test)</h2>
+        <p><em>(Translate this section to verify that technical, academic, literary, and colloquial text all use the same oMLX prompt format.)</em></p>
+        <ul>
+            <li><strong>Tech (资深程序员):</strong> The new API endpoint returns a JSON payload and requires an OAuth2 token for authentication. Be aware of potential race conditions in the async fetch function.</li>
+            <li><strong>Academic (学术研究员):</strong> Subsequent empirical analyses demonstrated a statistically significant correlation between the independent variables and the observed phenomenological outcomes.</li>
+            <li><strong>Literary (文学翻译家):</strong> The golden hues of the setting sun danced upon the tranquil surface of the lake, whispering secrets of forgotten eras to the gentle evening breeze.</li>
+            <li><strong>Social (冲浪达人):</strong> Bro, this new game is absolutely fire! No cap, the graphics are insane and the gameplay is so smooth. 10/10 would recommend.</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>3. 黑名单与不翻译区域 (Blacklisted Elements)</h2>
+        <p>The following elements should <strong>NOT</strong> be translated according to the rules in <code>content.js</code>:</p>
+        
+        <h3>Code Blocks (代码块)</h3>
+        <p>Inline code like <code>const x = 10;</code> should stay English.</p>
+        <pre><code>
+function calculateSum(a, b) {
+    // This comment should not be translated
+    return a + b;
+}
+console.log("Hello World");
+        </code></pre>
+
+        <h3>Specific Classes and Attributes (特定类名与属性)</h3>
+        <p class="notranslate">This entire paragraph has the class "notranslate" and must remain in English.</p>
+        <p translate="no">This paragraph uses the HTML5 attribute translate="no" and must remain in English.</p>
+        
+        <h3>Math & Icons (数学公式与图标类)</h3>
+        <p>Math equation area (class="katex"): <span class="katex">E = mc^2</span></p>
+        <p>Icon class (class="material-icons"): <span class="material-icons">favorite_border</span> (Should not be translated to "最喜欢_边框")</p>
+    </div>
+
+    <div class="section">
+        <h2>4. 特殊文本特征拦截 (Text Pattern Interception)</h2>
+        <p>The extension should smartly ignore pure symbols, URLs, emails, etc.</p>
+        <ul>
+            <li><strong>Pure URLs:</strong> https://github.com/google/gemini</li>
+            <li><strong>Emails:</strong> contact@example.com</li>
+            <li><strong>Numbers/Dates/Currency:</strong> 2024-05-20 14:30 PM, $1,234.56, €89.00</li>
+            <li><strong>Short gibberish (&lt;= 2 chars):</strong> OK</li>
+            <li><strong>Pure symbols:</strong> @#%&amp;*()-+</li>
+        </ul>
+        <p>However, a normal sentence containing a URL like "Visit https://google.com for more info." <em>should</em> be translated.</p>
+    </div>
+
+    <div class="section">
+        <h2>5. 不可见元素测试 (Invisible Elements Test)</h2>
+        <p>Hidden elements consume AI tokens unnecessarily. The extension should skip them.</p>
+        <p class="hidden">This is hidden via display: none. It should NOT be translated.</p>
+        <p class="transparent">This is invisible via opacity: 0. It should NOT be translated.</p>
+        <div class="zero-size">This has zero width and height. It should NOT be translated.</div>
+        <p style="visibility: hidden;">This is hidden via visibility: hidden. It should NOT be translated.</p>
+    </div>
+
+</body>
+</html>
