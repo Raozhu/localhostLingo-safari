@@ -96,6 +96,152 @@
         return languageFamily(sourceLang) === languageFamily(targetLang);
     }
 
+    function defaultReverseTarget(languageName) {
+        const family = languageFamily(languageName);
+        if (family === "zh") return "English";
+        return "Simplified Chinese";
+    }
+
+    function resolveSelectionTarget(sourceLang, selectionConfig) {
+        const configuredSource = selectionConfig.sourceLang || "auto";
+        const configuredTarget = selectionConfig.targetLang || "Simplified Chinese";
+        let targetLang = configuredTarget;
+
+        if (configuredSource === "auto") {
+            if (isSameLanguage(sourceLang, configuredTarget)) {
+                targetLang = defaultReverseTarget(sourceLang);
+            }
+        } else if (isSameLanguage(sourceLang, configuredTarget)) {
+            targetLang = configuredSource;
+        } else if (isSameLanguage(sourceLang, configuredSource)) {
+            targetLang = configuredTarget;
+        }
+
+        if (isSameLanguage(sourceLang, targetLang)) {
+            targetLang = defaultReverseTarget(sourceLang);
+        }
+
+        return targetLang;
+    }
+
+    function isTextEditableElement(element) {
+        if (!element) return false;
+        if (element instanceof HTMLTextAreaElement) return true;
+        if (!(element instanceof HTMLInputElement)) return false;
+
+        const textTypes = new Set([
+            "",
+            "email",
+            "number",
+            "password",
+            "search",
+            "tel",
+            "text",
+            "url"
+        ]);
+        return textTypes.has((element.type || "").toLowerCase());
+    }
+
+    function dispatchInputEvent(element, data) {
+        try {
+            element.dispatchEvent(new InputEvent("input", {
+                bubbles: true,
+                inputType: "insertReplacementText",
+                data
+            }));
+        } catch (error) {
+            element.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function getEditableSelection() {
+        const element = document.activeElement;
+        if (!isTextEditableElement(element)) return null;
+
+        const start = element.selectionStart;
+        const end = element.selectionEnd;
+        if (typeof start !== "number" || typeof end !== "number" || start === end) return null;
+
+        const text = element.value.slice(start, end);
+        if (!text.trim()) return null;
+
+        return {
+            text,
+            replace: translatedText => {
+                element.setRangeText(translatedText, start, end, "select");
+                dispatchInputEvent(element, translatedText);
+            }
+        };
+    }
+
+    function getDocumentSelection() {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+
+        const text = selection.toString();
+        if (!text.trim()) return null;
+
+        const ranges = [];
+        for (let index = 0; index < selection.rangeCount; index++) {
+            ranges.push(selection.getRangeAt(index).cloneRange());
+        }
+
+        return {
+            text,
+            replace: translatedText => {
+                selection.removeAllRanges();
+                const firstInsertedNode = document.createTextNode(translatedText);
+
+                ranges.forEach((range, index) => {
+                    range.deleteContents();
+                    const node = index === 0 ? firstInsertedNode : document.createTextNode(translatedText);
+                    range.insertNode(node);
+                });
+
+                const replacementRange = document.createRange();
+                replacementRange.selectNodeContents(firstInsertedNode);
+                selection.removeAllRanges();
+                selection.addRange(replacementRange);
+            }
+        };
+    }
+
+    async function translateSelectedText() {
+        const selectionInfo = getEditableSelection() || getDocumentSelection();
+        if (!selectionInfo) return;
+
+        const originalText = selectionInfo.text;
+        const sourceLang = config.sourceLang === "auto"
+            ? await detectSourceLanguage(originalText)
+            : await detectSourceLanguage(originalText);
+        const targetLang = resolveSelectionTarget(sourceLang, config);
+
+        try {
+            const response = await sendRuntimeMessage({
+                action: "translate",
+                payload: [
+                    {
+                        text: originalText.trim(),
+                        sourceLang
+                    }
+                ],
+                targetLang
+            });
+
+            const translatedText = response?.translatedArray?.[0];
+            if (translatedText) {
+                const leadingSpace = originalText.match(/^\s*/)?.[0] || "";
+                const trailingSpace = originalText.match(/\s*$/)?.[0] || "";
+                selectionInfo.replace(leadingSpace + translatedText + trailingSpace);
+            } else {
+                console.error("Selection translation failed:", response?.error || "Unknown response");
+            }
+        } catch (error) {
+            console.error("Selection translation failed:", error);
+        }
+    }
+
     function shouldTranslate(element, text) {
         if (!element) return false;
 
@@ -214,7 +360,7 @@
         }
 
         const spinnerChars = ["|", "/", "-", "\\"];
-        const MAX_CONCURRENT = 3;
+        const MAX_CONCURRENT = 2;
         const activePromises = [];
 
         for (const batch of batches) {
@@ -307,5 +453,9 @@
         }
     }
 
-    await translatePage();
+    if (action === "translate-selection") {
+        await translateSelectedText();
+    } else {
+        await translatePage();
+    }
 })();

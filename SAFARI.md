@@ -6,10 +6,16 @@ This directory is the Safari WebExtension source for `Rao oMLX Translate`.
 
 - oMLX URL: `http://127.0.0.1:9510`
 - API key: `raoz`
-- Model: `MiLMMT-mlx-8bit`
-- Endpoint used by the extension: `/v1/completions`
+- Model: `HY-MT1.5-1.8B-8bit`
+- Endpoint used by the extension: `/v1/chat/completions`
+- Browser translation concurrency: `2`
 
 The extension also checks `/v1/models` to make sure the model is available before enabling translation.
+
+Shortcuts:
+
+- `Option+A`: toggle page translation.
+- `Option+S`: translate and replace selected text.
 
 ## Generate the Safari Xcode project
 

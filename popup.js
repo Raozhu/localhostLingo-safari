@@ -150,7 +150,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (health?.ok) {
             setServiceStatus({
                 connected: true,
-                message: "oMLX MiLMMT 已连接"
+                message: "oMLX HY-MT 已连接"
             });
         } else {
             setServiceStatus({

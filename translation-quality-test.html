@@ -113,6 +113,22 @@
             border-left: 4px solid #9ca3af;
             color: #374151;
         }
+
+        textarea,
+        input,
+        [contenteditable="true"] {
+            width: 100%;
+            margin-top: 8px;
+            padding: 10px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font: inherit;
+            background: #ffffff;
+        }
+
+        textarea {
+            min-height: 84px;
+        }
     </style>
 </head>
 <body>
@@ -204,7 +220,7 @@
     <section>
         <h2>8. Mixed Language and Named Entities</h2>
         <p>Apple released Safari Web Extensions so developers can reuse much of their existing WebExtension code while still packaging it through Xcode.</p>
-        <p>The local model is called MiLMMT-mlx-8bit, and the server runs at http://127.0.0.1:9510.</p>
+        <p>The local model is called HY-MT1.5-1.8B-8bit, and the server runs at http://127.0.0.1:9510.</p>
         <p>Contact support@example.com if the upload fails again after 2026-05-01 18:30.</p>
         <p>The user said, "I do not want a generic summary. I need the exact tradeoff."</p>
     </section>
@@ -238,6 +254,15 @@
         <p>Pure URL: https://developer.apple.com/documentation/safariservices</p>
         <p>Pure email: support@example.com</p>
         <p>Pure numbers: 2026-05-01 18:30, $1,234.56, 42%</p>
+    </section>
+
+    <section>
+        <h2>12. Selection Shortcut Test</h2>
+        <p>Select part of the text inside these fields, then press Option+S.</p>
+        <input value="The selected text in this input should be replaced with its translation.">
+        <textarea>The selected sentence in this textarea should be translated and replaced without changing the rest of the field.</textarea>
+        <div contenteditable="true">This editable paragraph can be selected and translated with the Option+S shortcut.</div>
+        <p>Normal page selection should also be replaceable with translated text.</p>
     </section>
 </main>
 </body>

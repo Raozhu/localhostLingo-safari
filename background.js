@@ -1,10 +1,15 @@
 // Background service worker for the Safari WebExtension build.
-// It talks only to the local oMLX OpenAI-compatible completions endpoint.
+// It talks only to the local oMLX OpenAI-compatible chat completions endpoint.
 const OMLX_BASE_URL = "http://127.0.0.1:9510";
 const OMLX_API_KEY = "raoz";
-const OMLX_MODEL = "MiLMMT-mlx-8bit";
+const OMLX_MODEL = "HY-MT1.5-1.8B-8bit";
+const OMLX_MODEL_ALIASES = ["HY-MT1.5-1.8B-8bit", "HY-MT1.5-1.8B", "tencent/HY-MT1.5-1.8B"];
+const OMLX_MAX_CONCURRENT_REQUESTS = 2;
 const DEFAULT_SOURCE_LANGUAGE = "English";
 const DEFAULT_TARGET_LANGUAGE = "Simplified Chinese";
+let resolvedOmlxModel = null;
+let activeOmlxRequests = 0;
+const pendingOmlxRequests = [];
 
 const usingBrowserApi = typeof browser !== "undefined" && browser.runtime;
 const extensionApi = usingBrowserApi ? browser : chrome;
@@ -16,12 +21,77 @@ function withAuthorization(extraHeaders = {}) {
     };
 }
 
+async function runWithOmlxConcurrency(task) {
+    if (activeOmlxRequests >= OMLX_MAX_CONCURRENT_REQUESTS) {
+        await new Promise(resolve => pendingOmlxRequests.push(resolve));
+    }
+
+    activeOmlxRequests++;
+    try {
+        return await task();
+    } finally {
+        activeOmlxRequests--;
+        const next = pendingOmlxRequests.shift();
+        if (next) next();
+    }
+}
+
 function normalizeLanguageName(languageName, fallback) {
     const language = (languageName || "").trim();
     if (!language || language.toLowerCase() === "auto") {
         return fallback;
     }
     return language;
+}
+
+function normalizeEnglishPromptLanguageName(languageName) {
+    const language = normalizeLanguageName(languageName, DEFAULT_TARGET_LANGUAGE);
+    if (language === "Simplified Chinese") return "Chinese";
+    return language;
+}
+
+function normalizeChinesePromptLanguageName(languageName) {
+    const language = normalizeLanguageName(languageName, DEFAULT_TARGET_LANGUAGE);
+    if (language === "Simplified Chinese" || language === "Chinese") return "中文";
+    if (language === "Traditional Chinese") return "繁体中文";
+    if (language === "English") return "英语";
+    if (language === "Japanese") return "日语";
+    if (language === "Korean") return "韩语";
+    if (language === "French") return "法语";
+    if (language === "German") return "德语";
+    if (language === "Spanish") return "西班牙语";
+    if (language === "Portuguese") return "葡萄牙语";
+    if (language === "Russian") return "俄语";
+    if (language === "Arabic") return "阿拉伯语";
+    return language;
+}
+
+function isChineseLanguage(languageName) {
+    return normalizeLanguageName(languageName, "").includes("Chinese");
+}
+
+function findAvailableModelId(models) {
+    return OMLX_MODEL_ALIASES.find(alias => models.some(model => model.id === alias)) || null;
+}
+
+async function resolveOmlxModelId() {
+    if (resolvedOmlxModel) return resolvedOmlxModel;
+
+    try {
+        const response = await fetch(`${OMLX_BASE_URL}/v1/models`, {
+            method: "GET",
+            headers: withAuthorization()
+        });
+
+        if (!response.ok) return OMLX_MODEL;
+
+        const data = await response.json();
+        const models = Array.isArray(data?.data) ? data.data : [];
+        resolvedOmlxModel = findAvailableModelId(models) || OMLX_MODEL;
+        return resolvedOmlxModel;
+    } catch (error) {
+        return OMLX_MODEL;
+    }
 }
 
 function normalizeTextKey(text) {
@@ -39,7 +109,74 @@ function normalizeDedupeKey(item, targetLang) {
 }
 
 function buildTranslationPrompt(sourceLang, targetLang, sentence) {
-    return `Translate this from ${sourceLang} to ${targetLang}:\n${sourceLang}: ${sentence}\n${targetLang}:\n`;
+    if (isChineseLanguage(sourceLang)) {
+        const promptTargetLang = normalizeChinesePromptLanguageName(targetLang);
+        if (sentence.includes("__NT")) {
+            return `将以下文本翻译为${promptTargetLang}，注意只需要输出翻译后的结果，不要额外解释，并保持 __NTA__ 这类占位符不变：\n\n${sentence}`;
+        }
+        return `将以下文本翻译为${promptTargetLang}，注意只需要输出翻译后的结果，不要额外解释：\n\n${sentence}`;
+    }
+
+    const promptTargetLang = normalizeEnglishPromptLanguageName(targetLang);
+    if (sentence.includes("__NT")) {
+        return `Translate the following segment into ${promptTargetLang}, without additional explanation. Keep placeholders like __NTA__ unchanged.\n\n${sentence}`;
+    }
+    return `Translate the following segment into ${promptTargetLang}, without additional explanation.\n\n${sentence}`;
+}
+
+function protectNonTranslatableSegments(text) {
+    const segments = [];
+    let protectedText = String(text || "");
+
+    function placeholderName(index) {
+        let value = "";
+        let current = index;
+        do {
+            value = String.fromCharCode(65 + (current % 26)) + value;
+            current = Math.floor(current / 26) - 1;
+        } while (current >= 0);
+        return value;
+    }
+
+    function addPlaceholder(value) {
+        const placeholder = `__NT${placeholderName(segments.length)}__`;
+        segments.push({ placeholder, value });
+        return placeholder;
+    }
+
+    const patterns = [
+        /https?:\/\/[^\s<>"'）)]+/g,
+        /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+        /\b\d{4}-\d{1,2}-\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?\b/g,
+        /[$€£¥₹]\s?\d[\d,]*(?:\.\d+)?/g,
+        /\b\d+(?:\.\d+)?%/g,
+        /\b\d[\d,]*(?:\.\d+)?\b/g
+    ];
+
+    for (const pattern of patterns) {
+        protectedText = protectedText.replace(pattern, match => {
+            if (/^__NT[A-Z]+__$/.test(match)) return match;
+            return addPlaceholder(match);
+        });
+    }
+
+    return {
+        text: protectedText,
+        segments
+    };
+}
+
+function restoreNonTranslatableSegments(text, segments) {
+    let restored = String(text || "");
+    for (const { placeholder, value } of segments) {
+        restored = restored.replaceAll(placeholder, value);
+        const relaxedPlaceholder = placeholder
+            .replace("__", "__\\s*")
+            .replace("NT", "N\\s*T\\s*")
+            .replace(/([A-Z]+)__$/, "$1\\s*__");
+        restored = restored.replace(new RegExp(relaxedPlaceholder, "g"), value);
+    }
+    return restored;
 }
 
 function escapeRegExp(value) {
@@ -99,9 +236,18 @@ function cleanTranslationText(text, sourceLang, targetLang, sourceText) {
 
     const targetLabel = new RegExp(`^${escapeRegExp(targetLang)}\\s*:\\s*`, "i");
     cleaned = cleaned.replace(targetLabel, "").trim();
+    for (const promptLanguageName of [
+        normalizeEnglishPromptLanguageName(targetLang),
+        normalizeChinesePromptLanguageName(targetLang)
+    ]) {
+        const promptTargetLabel = new RegExp(`^${escapeRegExp(promptLanguageName)}\\s*[:：]\\s*`, "i");
+        cleaned = cleaned.replace(promptTargetLabel, "").trim();
+    }
 
     const stopMarkers = [
         `\nTranslate this from `,
+        `\nTranslate the following segment into `,
+        `\n将以下文本翻译为`,
         `\n${sourceLang}:`,
         `\n${targetLang}:`
     ];
@@ -145,27 +291,20 @@ function normalizePayload(payload, fallbackSourceLang) {
         .filter(item => item.text.trim().length > 0);
 }
 
-function estimateItemMaxTokens(text) {
+function estimateItemMaxTokens(text, protectedSegmentCount = 0, targetLang = DEFAULT_TARGET_LANGUAGE) {
     const length = String(text || "").trim().length;
-    if (length <= 12) return 8;
-    if (length <= 32) return 10;
-    if (length <= 48) return 16;
+    const placeholderBudget = protectedSegmentCount > 0 ? 16 : 0;
+    if (normalizeLanguageName(targetLang, DEFAULT_TARGET_LANGUAGE) === "English") {
+        if (length <= 12) return 24 + placeholderBudget;
+        if (length <= 32) return 48 + placeholderBudget;
+        if (length <= 48) return 64 + placeholderBudget;
+        if (length <= 80) return 96;
+    }
+    if (length <= 12) return 8 + placeholderBudget;
+    if (length <= 32) return 12 + placeholderBudget;
+    if (length <= 48) return 24 + placeholderBudget;
     if (length <= 80) return 32;
     return Math.min(320, Math.max(96, Math.ceil(length * 0.9)));
-}
-
-function groupItemsByTokenBudget(items) {
-    const groupsByBudget = new Map();
-
-    items.forEach((item, index) => {
-        const maxTokens = estimateItemMaxTokens(item.text);
-        if (!groupsByBudget.has(maxTokens)) {
-            groupsByBudget.set(maxTokens, []);
-        }
-        groupsByBudget.get(maxTokens).push({ item, index });
-    });
-
-    return [...groupsByBudget.entries()].map(([maxTokens, entries]) => ({ maxTokens, entries }));
 }
 
 async function checkOmlxHealth() {
@@ -181,16 +320,52 @@ async function checkOmlxHealth() {
 
         const data = await response.json();
         const models = Array.isArray(data?.data) ? data.data : [];
-        const hasModel = models.some(model => model.id === OMLX_MODEL);
+        const availableModel = findAvailableModelId(models);
 
-        if (!hasModel) {
-            return { ok: false, error: `oMLX is running, but ${OMLX_MODEL} is not available` };
+        if (!availableModel) {
+            return { ok: false, error: `oMLX is running, but ${OMLX_MODEL_ALIASES.join(" or ")} is not available` };
         }
 
-        return { ok: true, model: OMLX_MODEL };
+        resolvedOmlxModel = availableModel;
+        return { ok: true, model: availableModel };
     } catch (error) {
         return { ok: false, error: error.message || "Unable to connect to oMLX" };
     }
+}
+
+async function translateSingleItem(item, targetLang, modelId) {
+    const protectedInput = protectNonTranslatableSegments(item.text);
+    const prompt = buildTranslationPrompt(item.sourceLang, targetLang, protectedInput.text);
+    const response = await runWithOmlxConcurrency(() => fetch(`${OMLX_BASE_URL}/v1/chat/completions`, {
+        method: "POST",
+        headers: withAuthorization({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+            model: modelId,
+            messages: [
+                {
+                    role: "user",
+                    content: prompt
+                }
+            ],
+            temperature: 0,
+            max_tokens: estimateItemMaxTokens(item.text, protectedInput.segments.length, targetLang)
+        })
+    }));
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+        const message = data?.error?.message || `oMLX request failed with HTTP ${response.status}`;
+        throw new Error(message);
+    }
+
+    const content = data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text;
+    if (typeof content !== "string") {
+        throw new Error("oMLX response missing translation content");
+    }
+
+    const cleaned = cleanTranslationText(content, item.sourceLang, targetLang, item.text);
+    return restoreNonTranslatableSegments(cleaned, protectedInput.segments);
 }
 
 async function translateWithOmlx(request) {
@@ -204,6 +379,7 @@ async function translateWithOmlx(request) {
     const translatedArray = new Array(items.length).fill(null);
     const uniqueItems = [];
     const seenUniqueKeys = new Map();
+    const modelId = await resolveOmlxModelId();
 
     items.forEach((item, index) => {
         const dedupeKey = normalizeDedupeKey(item, targetLang);
@@ -224,50 +400,15 @@ async function translateWithOmlx(request) {
         return { translatedArray };
     }
 
-    const groups = groupItemsByTokenBudget(uniqueItems.map(uniqueItem => uniqueItem.item));
-
-    for (const group of groups) {
-        const prompts = group.entries.map(entry => {
-            return buildTranslationPrompt(entry.item.sourceLang, targetLang, entry.item.text);
-        });
-
-        const response = await fetch(`${OMLX_BASE_URL}/v1/completions`, {
-            method: "POST",
-            headers: withAuthorization({ "Content-Type": "application/json" }),
-            body: JSON.stringify({
-                model: OMLX_MODEL,
-                prompt: prompts,
-                temperature: 0,
-                max_tokens: group.maxTokens
-            })
-        });
-
-        const data = await response.json().catch(() => ({}));
-
-        if (!response.ok) {
-            const message = data?.error?.message || `oMLX request failed with HTTP ${response.status}`;
-            return { error: `❌ [oMLX 请求失败: ${message}]` };
-        }
-
-        if (!Array.isArray(data?.choices)) {
-            return { error: "❌ [oMLX 响应异常: 缺少 choices]" };
-        }
-
-        data.choices.forEach((choice, fallbackIndex) => {
-            const groupIndex = Number.isInteger(choice?.index) ? choice.index : fallbackIndex;
-            const entry = group.entries[groupIndex];
-            if (!entry) return;
-
-            const translation = cleanTranslationText(
-                choice?.text,
-                entry.item.sourceLang,
-                targetLang,
-                entry.item.text
-            );
-            uniqueItems[entry.index].sourceIndexes.forEach(sourceIndex => {
+    try {
+        await Promise.all(uniqueItems.map(async uniqueItem => {
+            const translation = await translateSingleItem(uniqueItem.item, targetLang, modelId);
+            uniqueItem.sourceIndexes.forEach(sourceIndex => {
                 translatedArray[sourceIndex] = translation;
             });
-        });
+        }));
+    } catch (error) {
+        return { error: `❌ [oMLX 请求失败: ${error.message}]` };
     }
 
     return {
@@ -340,7 +481,7 @@ function executeScript(details) {
     });
 }
 
-async function toggleTranslationForActiveTab() {
+async function executeContentActionForActiveTab(action) {
     const tab = await queryActiveTab();
     if (!tab?.id) return;
 
@@ -350,15 +491,17 @@ async function toggleTranslationForActiveTab() {
 
     await executeScript({
         target: { tabId: tab.id },
-        func: (source, target) => {
+        func: (nextAction, source, target) => {
             const currentDisplay = window.__currentDisplay || "original";
-            window.__translationAction = currentDisplay === "original" ? "translate" : "revert";
+            window.__translationAction = nextAction === "toggle-translation"
+                ? (currentDisplay === "original" ? "translate" : "revert")
+                : nextAction;
             window.__translationConfig = {
                 sourceLang: source,
                 targetLang: target
             };
         },
-        args: [sourceLang, targetLang]
+        args: [action, sourceLang, targetLang]
     });
 
     await executeScript({
@@ -372,8 +515,12 @@ addRuntimeMessageListener();
 if (extensionApi.commands?.onCommand) {
     extensionApi.commands.onCommand.addListener(command => {
         if (command === "toggle-translation") {
-            toggleTranslationForActiveTab().catch(error => {
+            executeContentActionForActiveTab("toggle-translation").catch(error => {
                 console.error("Failed to toggle translation:", error);
+            });
+        } else if (command === "translate-selection") {
+            executeContentActionForActiveTab("translate-selection").catch(error => {
+                console.error("Failed to translate selection:", error);
             });
         }
     });
