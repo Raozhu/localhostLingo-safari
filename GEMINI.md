@@ -9,7 +9,7 @@
     - 文本处理必须维持分批逻辑（10 项/500 字符），严禁一次性向模型发送超大全文。
     - 浏览器和后台 oMLX 请求并发数上限保持为 2；本机测试显示这比高并发有更好的可感知延迟。
 - **无损还原**：任何翻译逻辑必须确保能够通过 `__translatedNodesMap` 还原原文，不得破坏 DOM 结构。
-- **选区翻译**：`Option+S` 必须翻译并替换当前选中文本，优先支持 `input`、`textarea`，其次支持页面普通选区和 `contenteditable`。
+- **选区翻译**：`Control+A` 必须翻译并替换当前选中文本，优先支持 `input`、`textarea`，其次支持页面普通选区和 `contenteditable`。
 
 ## 2. oMLX Prompt 规范
 

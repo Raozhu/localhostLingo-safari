@@ -15,7 +15,7 @@ The extension also checks `/v1/models` to make sure the model is available befor
 Shortcuts:
 
 - `Option+A`: toggle page translation.
-- `Option+S`: translate and replace selected text.
+- `Control+A`: translate and replace selected text.
 
 ## Generate the Safari Xcode project
 
