@@ -16,7 +16,7 @@ Open `translation-quality-test.html` in Safari, enable the temporary extension, 
 ## Shortcuts
 
 - `Option+A`: toggle the current page between translated text and original text.
-- `Control+A`: translate and replace the currently selected text. If the selected text is already in the configured target language, the extension translates it back to the configured source language. With source set to Auto and target set to Chinese, English text becomes Chinese and Chinese text becomes English.
+- `Control+S`: translate and replace the full text in the currently focused input field. If the text is already in the configured target language, the extension translates it back to the configured source language. With source set to Auto and target set to Chinese, English text becomes Chinese and Chinese text becomes English.
 
 ## Safari Packaging
 

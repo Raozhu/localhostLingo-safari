@@ -155,66 +155,64 @@
         element.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
-    function getEditableSelection() {
-        const element = document.activeElement;
-        if (!isTextEditableElement(element)) return null;
-
-        const start = element.selectionStart;
-        const end = element.selectionEnd;
-        if (typeof start !== "number" || typeof end !== "number" || start === end) return null;
-
-        const text = element.value.slice(start, end);
-        if (!text.trim()) return null;
-
-        return {
-            text,
-            replace: translatedText => {
-                element.setRangeText(translatedText, start, end, "select");
-                dispatchInputEvent(element, translatedText);
-            }
-        };
+    function findContentEditableRoot(element) {
+        if (!element?.closest) return null;
+        return element.closest("[contenteditable]:not([contenteditable=\"false\"])");
     }
 
-    function getDocumentSelection() {
+    function placeCaretAtEnd(element) {
         const selection = window.getSelection();
-        if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+        if (!selection) return;
 
-        const text = selection.toString();
-        if (!text.trim()) return null;
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
 
-        const ranges = [];
-        for (let index = 0; index < selection.rangeCount; index++) {
-            ranges.push(selection.getRangeAt(index).cloneRange());
+    function getFocusedEditableText() {
+        const element = document.activeElement;
+        if (isTextEditableElement(element)) {
+            const text = element.value;
+            if (!text.trim()) return null;
+
+            return {
+                text,
+                replace: translatedText => {
+                    element.value = translatedText;
+                    element.focus();
+                    if (typeof element.setSelectionRange === "function") {
+                        element.setSelectionRange(translatedText.length, translatedText.length);
+                    }
+                    dispatchInputEvent(element, translatedText);
+                }
+            };
         }
 
+        const editableRoot = findContentEditableRoot(element);
+        if (!editableRoot) return null;
+
+        const text = editableRoot.innerText || editableRoot.textContent || "";
+        if (!text.trim()) return null;
+
         return {
             text,
             replace: translatedText => {
-                selection.removeAllRanges();
-                const firstInsertedNode = document.createTextNode(translatedText);
-
-                ranges.forEach((range, index) => {
-                    range.deleteContents();
-                    const node = index === 0 ? firstInsertedNode : document.createTextNode(translatedText);
-                    range.insertNode(node);
-                });
-
-                const replacementRange = document.createRange();
-                replacementRange.selectNodeContents(firstInsertedNode);
-                selection.removeAllRanges();
-                selection.addRange(replacementRange);
+                editableRoot.textContent = translatedText;
+                editableRoot.focus();
+                placeCaretAtEnd(editableRoot);
+                dispatchInputEvent(editableRoot, translatedText);
             }
         };
     }
 
-    async function translateSelectedText() {
-        const selectionInfo = getEditableSelection() || getDocumentSelection();
-        if (!selectionInfo) return;
+    async function translateFocusedInputText() {
+        const editableInfo = getFocusedEditableText();
+        if (!editableInfo) return;
 
-        const originalText = selectionInfo.text;
-        const sourceLang = config.sourceLang === "auto"
-            ? await detectSourceLanguage(originalText)
-            : await detectSourceLanguage(originalText);
+        const originalText = editableInfo.text;
+        const sourceLang = await detectSourceLanguage(originalText);
         const targetLang = resolveSelectionTarget(sourceLang, config);
 
         try {
@@ -233,12 +231,12 @@
             if (translatedText) {
                 const leadingSpace = originalText.match(/^\s*/)?.[0] || "";
                 const trailingSpace = originalText.match(/\s*$/)?.[0] || "";
-                selectionInfo.replace(leadingSpace + translatedText + trailingSpace);
+                editableInfo.replace(leadingSpace + translatedText + trailingSpace);
             } else {
-                console.error("Selection translation failed:", response?.error || "Unknown response");
+                console.error("Input translation failed:", response?.error || "Unknown response");
             }
         } catch (error) {
-            console.error("Selection translation failed:", error);
+            console.error("Input translation failed:", error);
         }
     }
 
@@ -454,7 +452,7 @@
     }
 
     if (action === "translate-selection") {
-        await translateSelectedText();
+        await translateFocusedInputText();
     } else {
         await translatePage();
     }

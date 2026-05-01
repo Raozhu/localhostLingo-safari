@@ -15,7 +15,7 @@ The extension also checks `/v1/models` to make sure the model is available befor
 Shortcuts:
 
 - `Option+A`: toggle page translation.
-- `Control+A`: translate and replace selected text.
+- `Control+S`: translate and replace the full text in the focused input field.
 
 ## Generate the Safari Xcode project
 

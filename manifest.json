@@ -33,10 +33,10 @@
     },
     "translate-selection": {
       "suggested_key": {
-        "default": "Ctrl+A",
-        "mac": "MacCtrl+A"
+        "default": "Ctrl+S",
+        "mac": "MacCtrl+S"
       },
-      "description": "翻译并替换当前选中文本"
+      "description": "翻译并替换当前输入框全文"
     }
   }
 }

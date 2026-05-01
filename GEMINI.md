@@ -9,7 +9,7 @@
     - 文本处理必须维持分批逻辑（10 项/500 字符），严禁一次性向模型发送超大全文。
     - 浏览器和后台 oMLX 请求并发数上限保持为 2；本机测试显示这比高并发有更好的可感知延迟。
 - **无损还原**：任何翻译逻辑必须确保能够通过 `__translatedNodesMap` 还原原文，不得破坏 DOM 结构。
-- **选区翻译**：`Control+A` 必须翻译并替换当前选中文本，优先支持 `input`、`textarea`，其次支持页面普通选区和 `contenteditable`。
+- **输入框翻译**：`Control+S` 必须翻译并替换当前聚焦输入框的全文，优先支持 `input`、`textarea`，其次支持 `contenteditable`。
 
 ## 2. oMLX Prompt 规范
 
@@ -37,7 +37,7 @@ Translate the following segment into <target language>, without additional expla
 - **接口形态**：使用 `/v1/chat/completions`，因为 HY-MT 依赖 chat template；不要回退到 raw `/v1/completions`。
 - **并发翻译**：后台必须通过全局队列限制最多 2 个 oMLX 请求同时运行；重复文本仍需去重后复用结果。
 - **DOM 过滤逻辑**：必须严格排除 `pre`, `code`, `script`、`.notranslate`、`[translate="no"]` 等区域。
-- **语言互转**：选区翻译时，如果选中文本已经是当前目标语言，则翻译回当前源语言；当源语言为 `auto` 且目标为中文时，英文转中文、中文转英文。
+- **语言互转**：输入框翻译时，如果文本已经是当前目标语言，则翻译回当前源语言；当源语言为 `auto` 且目标为中文时，英文转中文、中文转英文。
 - **原生技术栈**：保持使用原生 JavaScript 和 Vanilla CSS，不引入大型库或框架。
 - **跨浏览器 API**：保留轻量 `browser.*` / `chrome.*` 兼容包装，方便 Safari 和调试环境共用源码。
 
