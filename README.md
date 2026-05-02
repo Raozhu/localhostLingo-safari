@@ -13,6 +13,10 @@ Safari WebExtension source for translating web pages through a local oMLX servic
 
 Open `translation-quality-test.html` in Safari, enable the temporary extension, and run page translation from the toolbar popup.
 
+## Translation Guards
+
+- GitHub repository chrome, breadcrumbs, file metadata, file trees, standalone filenames, repository paths, usernames, code flags, acronyms, and CamelCase identifiers are skipped or protected before model calls.
+
 ## Shortcuts
 
 - `Option+A`: toggle the current page between translated text and original text.

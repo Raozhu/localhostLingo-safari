@@ -207,6 +207,63 @@
         };
     }
 
+    function isCodeLikeStandaloneText(text) {
+        const value = text.trim();
+        if (!value || /\s/.test(value)) return false;
+
+        if (/^@[A-Za-z0-9][A-Za-z0-9_-]{1,38}$/.test(value)) return true;
+        if (/^--[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value)) return true;
+        if (/^[A-Z][A-Z0-9_]{1,12}$/.test(value)) return true;
+        if (/[\\/@]/.test(value)) return true;
+        if (/\.[A-Za-z0-9]{1,8}(?:[#?].*)?$/.test(value)) return true;
+        if (/[a-z][A-Z]/.test(value)) return true;
+        if (/[._]/.test(value) && /[A-Za-z]/.test(value)) return true;
+        if (/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+$/.test(value) && /[A-Z0-9]/.test(value)) return true;
+
+        return false;
+    }
+
+    function isGitHubPage() {
+        return location.hostname === "github.com" || location.hostname.endsWith(".github.com");
+    }
+
+    function isGitHubNonContentElement(element) {
+        if (!isGitHubPage() || !element?.closest) return false;
+
+        const githubChromeSelectors = [
+            "header",
+            "#repository-container-header",
+            "#repos-sticky-header",
+            "[data-testid=\"breadcrumbs\"]",
+            "[data-testid=\"breadcrumbs-filename\"]",
+            "[data-testid=\"blob-size\"]",
+            "[aria-label=\"File view\"]",
+            "[data-testid=\"raw-button\"]",
+            "[data-testid=\"copy-raw-button\"]",
+            "[data-testid=\"download-raw-button\"]",
+            "[data-testid^=\"more-file-actions-button\"]",
+            "[data-testid=\"latest-commit-details\"]",
+            "[data-testid=\"screen-reader-heading\"]",
+            ".js-file-line",
+            ".blob-code",
+            ".react-code-lines",
+            ".react-directory",
+            ".PRIVATE_TreeView",
+            "[aria-label=\"File Tree\"]",
+            "[data-testid=\"tree-browser\"]",
+            "[data-testid=\"file-tree\"]"
+        ].join(",");
+
+        if (element.closest(githubChromeSelectors)) return true;
+
+        const link = element.closest("a[href]");
+        if (!link) return false;
+
+        const href = link.getAttribute("href") || "";
+        return isCodeLikeStandaloneText(element.textContent || "")
+            && /(?:\/blob\/|\/tree\/|\/raw\/|\/commits\/|github\.com\/[^/]+\/[^/]+|\/[^/?#]+\.[A-Za-z0-9]{1,8}(?:[?#]|$))/i.test(href);
+    }
+
     async function translateFocusedInputText() {
         const editableInfo = getFocusedEditableText();
         if (!editableInfo) return;
@@ -253,11 +310,13 @@
         if (element.closest(".notranslate, [translate=\"no\"]")) return false;
         if (element.closest(".katex, .MathJax, .mjx-chtml")) return false;
         if (element.closest(".material-icons, [class^=\"fa-\"], [class*=\" fa-\"], [class^=\"icon-\"], [class*=\" icon-\"]")) return false;
+        if (isGitHubNonContentElement(element)) return false;
 
         const trimmedText = text.trim();
         const cleanText = trimmedText.replace(/\s+/g, "");
 
         if (cleanText.length <= 2) return false;
+        if (isCodeLikeStandaloneText(trimmedText)) return false;
         if (/^(https?:\/\/|ftp:\/\/|www\.)\S+$/i.test(trimmedText)) return false;
         if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedText)) return false;
         if (/^[\d.,\-+$€£¥₹\s:\/]+(AM|PM|am|pm)?$/.test(trimmedText)) return false;

@@ -12,6 +12,8 @@ This directory is the Safari WebExtension source for `Rao oMLX Translate`.
 
 The extension also checks `/v1/models` to make sure the model is available before enabling translation.
 
+GitHub repository chrome, file paths, filenames, usernames, code flags, acronyms, and CamelCase identifiers are skipped or protected so code/documentation pages remain readable after translation.
+
 Shortcuts:
 
 - `Option+A`: toggle page translation.

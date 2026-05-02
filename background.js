@@ -144,9 +144,25 @@ function protectNonTranslatableSegments(text) {
         return placeholder;
     }
 
+    const fileExtensionPattern = [
+        "bash", "c", "cc", "cfg", "cjs", "conf", "cpp", "cs", "css", "csv", "env",
+        "fish", "flac", "gif", "go", "gz", "h", "hpp", "html?", "ini", "ipynb",
+        "java", "jpe?g", "js", "json", "jsx", "kt", "lock", "lua", "m", "md",
+        "mjs", "mm", "mp3", "mp4", "pdf", "php", "pl", "png", "py", "r", "rb",
+        "rs", "scss", "sh", "sql", "svg", "swift", "tar", "toml", "ts", "tsx",
+        "txt", "wav", "webp", "whl", "xml", "ya?ml", "zip", "zsh"
+    ].join("|");
+
     const patterns = [
         /https?:\/\/[^\s<>"'）)]+/g,
         /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+        /\b[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)+(?::[A-Za-z0-9][A-Za-z0-9._.-]*)?\b/g,
+        new RegExp(`\\b[A-Za-z0-9][A-Za-z0-9._-]*\\.(?:${fileExtensionPattern})\\b`, "gi"),
+        /\b[A-Za-z]+[a-z][A-Z][A-Za-z0-9_-]*\b/g,
+        /\b(?=[A-Za-z0-9_-]*[A-Z]{2,})(?=[A-Za-z0-9_-]*[-_0-9])[A-Za-z][A-Za-z0-9_-]{2,}\b/g,
+        /\b[A-Z][A-Z0-9]{1,12}\b/g,
+        /--[A-Za-z0-9][A-Za-z0-9_-]*/g,
+        /@[A-Za-z0-9][A-Za-z0-9_-]{1,38}\b/g,
         /\b\d{4}-\d{1,2}-\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?\b/g,
         /[$€£¥₹]\s?\d[\d,]*(?:\.\d+)?/g,
         /\b\d+(?:\.\d+)?%/g,
