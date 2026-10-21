@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Rao oMLX Translate",
-  "description": "Use a local oMLX translation model to translate the current Safari page.",
+  "name": "Rao DeepSeek Translate",
+  "description": "Use DeepSeek to translate the current Safari page.",
   "version": "2.2",
   "icons": {
     "16": "icons/icon-16.png",
@@ -10,7 +10,7 @@
     "128": "icons/icon-128.png"
   },
   "permissions": ["activeTab", "scripting", "storage"],
-  "host_permissions": ["http://127.0.0.1:9510/*", "http://localhost:9510/*"],
+  "host_permissions": ["https://api.deepseek.com/*"],
   "background": {
     "service_worker": "background.js"
   },

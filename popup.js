@@ -150,18 +150,18 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (health?.ok) {
             setServiceStatus({
                 connected: true,
-                message: "oMLX HY-MT 已连接"
+                message: "DeepSeek 已连接"
             });
         } else {
             setServiceStatus({
                 connected: false,
-                message: health?.error || "未检测到 oMLX 服务"
+                message: health?.error || "无法连接 DeepSeek"
             });
         }
     } catch (error) {
         setServiceStatus({
             connected: false,
-            message: error.message || "未检测到 oMLX 服务"
+            message: error.message || "无法连接 DeepSeek"
         });
     }
 });

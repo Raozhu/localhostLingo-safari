@@ -1,13 +1,14 @@
-# Rao oMLX Translate
+# Rao DeepSeek Translate
 
-Safari WebExtension source for translating web pages through a local oMLX service.
+Safari WebExtension source for translating web pages through the DeepSeek API.
 
-## Local Service
+## Service
 
-- URL: `http://127.0.0.1:9510`
-- Model: `HY-MT1.5-1.8B-8bit`
+- URL: `https://api.deepseek.com`
+- Model: `deepseek-flash` (thinking disabled)
 - API: OpenAI-compatible `/v1/chat/completions`
-- Browser translation concurrency: `2`
+- API key: copy `config.example.js` to `config.js` (git-ignored) and fill in `DEEPSEEK_API_KEY`
+- Browser translation concurrency: `8`
 
 ## Test Page
 

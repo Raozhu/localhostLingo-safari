@@ -1,10 +1,11 @@
 // Background service worker for the Safari WebExtension build.
-// It talks only to the local oMLX OpenAI-compatible chat completions endpoint.
-const OMLX_BASE_URL = "http://127.0.0.1:9510";
-const OMLX_API_KEY = "raoz";
-const OMLX_MODEL = "HY-MT1.5-1.8B-8bit";
-const OMLX_MODEL_ALIASES = ["HY-MT1.5-1.8B-8bit", "HY-MT1.5-1.8B", "tencent/HY-MT1.5-1.8B"];
-const OMLX_MAX_CONCURRENT_REQUESTS = 2;
+// It talks to the DeepSeek OpenAI-compatible chat completions endpoint.
+importScripts("config.js");
+const OMLX_BASE_URL = "https://api.deepseek.com";
+const OMLX_API_KEY = DEEPSEEK_API_KEY;
+const OMLX_MODEL = "deepseek-flash";
+const OMLX_MODEL_ALIASES = ["deepseek-flash", "deepseek-v4-pro"];
+const OMLX_MAX_CONCURRENT_REQUESTS = 8;
 const DEFAULT_SOURCE_LANGUAGE = "English";
 const DEFAULT_TARGET_LANGUAGE = "Simplified Chinese";
 let resolvedOmlxModel = null;
@@ -308,6 +309,10 @@ function normalizePayload(payload, fallbackSourceLang) {
 }
 
 function estimateItemMaxTokens(text, protectedSegmentCount = 0, targetLang = DEFAULT_TARGET_LANGUAGE) {
+    return Math.max(64, estimateHyMtMaxTokens(text, protectedSegmentCount, targetLang) * 2);
+}
+
+function estimateHyMtMaxTokens(text, protectedSegmentCount, targetLang) {
     const length = String(text || "").trim().length;
     const placeholderBudget = protectedSegmentCount > 0 ? 16 : 0;
     if (normalizeLanguageName(targetLang, DEFAULT_TARGET_LANGUAGE) === "English") {
@@ -331,7 +336,7 @@ async function checkOmlxHealth() {
         });
 
         if (!response.ok) {
-            return { ok: false, error: `oMLX responded with HTTP ${response.status}` };
+            return { ok: false, error: `DeepSeek responded with HTTP ${response.status}` };
         }
 
         const data = await response.json();
@@ -339,13 +344,13 @@ async function checkOmlxHealth() {
         const availableModel = findAvailableModelId(models);
 
         if (!availableModel) {
-            return { ok: false, error: `oMLX is running, but ${OMLX_MODEL_ALIASES.join(" or ")} is not available` };
+            return { ok: false, error: `DeepSeek is reachable, but ${OMLX_MODEL_ALIASES.join(" or ")} is not available` };
         }
 
         resolvedOmlxModel = availableModel;
         return { ok: true, model: availableModel };
     } catch (error) {
-        return { ok: false, error: error.message || "Unable to connect to oMLX" };
+        return { ok: false, error: error.message || "Unable to connect to DeepSeek" };
     }
 }
 
@@ -363,6 +368,7 @@ async function translateSingleItem(item, targetLang, modelId) {
                     content: prompt
                 }
             ],
+            thinking: { type: "disabled" },
             temperature: 0,
             max_tokens: estimateItemMaxTokens(item.text, protectedInput.segments.length, targetLang)
         })
@@ -371,13 +377,13 @@ async function translateSingleItem(item, targetLang, modelId) {
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-        const message = data?.error?.message || `oMLX request failed with HTTP ${response.status}`;
+        const message = data?.error?.message || `DeepSeek request failed with HTTP ${response.status}`;
         throw new Error(message);
     }
 
     const content = data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text;
     if (typeof content !== "string") {
-        throw new Error("oMLX response missing translation content");
+        throw new Error("DeepSeek response missing translation content");
     }
 
     const cleaned = cleanTranslationText(content, item.sourceLang, targetLang, item.text);
@@ -424,7 +430,7 @@ async function translateWithOmlx(request) {
             });
         }));
     } catch (error) {
-        return { error: `❌ [oMLX 请求失败: ${error.message}]` };
+        return { error: `❌ [DeepSeek 请求失败: ${error.message}]` };
     }
 
     return {
