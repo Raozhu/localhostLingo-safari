@@ -17,8 +17,8 @@ export function chatResponse(translations, status = 200) {
 }
 
 // `respond(items, target, callIndex)` returns a translations array or a Response.
-export function loadBackground(respond = items => items.map(upperCaseWords)) {
-    const store = {};
+export function loadBackground(respond = items => items.map(upperCaseWords), { apiKey = "test-key" } = {}) {
+    const store = apiKey ? { deepseekApiKey: apiKey } : {};
     const requests = [];
     let handler = null;
 
@@ -28,7 +28,7 @@ export function loadBackground(respond = items => items.map(upperCaseWords)) {
         }
         const body = JSON.parse(options.body);
         const { target, items } = JSON.parse(body.messages[1].content);
-        requests.push({ body, target, items });
+        requests.push({ body, target, items, authorization: options.headers?.Authorization });
         const result = await respond(items, target, requests.length - 1);
         return result instanceof Response ? result : chatResponse(result);
     }
@@ -52,9 +52,6 @@ export function loadBackground(respond = items => items.map(upperCaseWords)) {
         clearTimeout,
         AbortController,
         URL,
-        importScripts: file => {
-            if (file === "config.js") vm.runInContext("const DEEPSEEK_API_KEY = 'test-key';", context);
-        },
         browser: {
             runtime: { onMessage: { addListener: listener => { handler = listener; } } },
             commands: {},

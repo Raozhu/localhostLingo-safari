@@ -3,7 +3,7 @@
 本文件定义这个 Safari WebExtension 的开发约束。
 
 ## 1. 核心架构原则
-- **模型与鉴权**：翻译走 DeepSeek（`https://api.deepseek.com/v1/chat/completions`），模型 `deepseek-flash`，必须带 `thinking: { type: "disabled" }`。API key 只放在不提交的 `config.js`。
+- **模型与鉴权**：翻译走 DeepSeek（`https://api.deepseek.com/v1/chat/completions`），模型 `deepseek-flash`，必须带 `thinking: { type: "disabled" }`。API key 由用户在弹窗里填写，只存在扩展的 `storage.local`（键名 `deepseekApiKey`），后台每次请求时读取；不得写进源码、配置文件或打包进 App。没有 key 时不发请求，直接提示去弹窗设置。
 - **请求格式**：系统提示 + 用户消息 `{"target", "items"}`，`response_format` 为 `json_object`，模型返回 `{"translations"}`，条数必须与输入一致；不一致时后台把这一组对半拆开重试。
 - **分批与并发**：页面每批最多 12 段 / 2500 字符，同时最多 4 批；后台每个请求最多 20 段 / 4000 字符，同时最多 8 个请求。超时、429、5xx 自动重试 2 次。
 - **按段落翻译**：一个块级元素是一个翻译单元。内联元素写成 `<gN>…</gN>`，代码、图标、嵌套块写成 `<xN/>`；译文只回写到原有文本节点，不新建、不移动元素。标签被模型打乱时，这一段退回逐个文本节点翻译。

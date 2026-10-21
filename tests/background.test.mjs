@@ -65,3 +65,24 @@ test("splits a batch when the model returns the wrong number of items", async ()
 
     assert.deepEqual(result.translatedArray, ["FIRST ITEM", "SECOND ITEM", "THIRD ITEM"]);
 });
+
+test("uses the API key saved from the popup", async () => {
+    const background = loadBackground(undefined, { apiKey: "sk-from-popup" });
+    await translate(background, ["Hello there"]);
+    assert.equal(background.requests[0].authorization, "Bearer sk-from-popup");
+
+    background.store.deepseekApiKey = "sk-replaced";
+    await translate(background, ["Another sentence"]);
+    assert.equal(background.requests[1].authorization, "Bearer sk-replaced");
+});
+
+test("asks for an API key before calling DeepSeek", async () => {
+    const background = loadBackground(undefined, { apiKey: "" });
+    const health = await background.handle({ action: "health" });
+    const result = await translate(background, ["Hello there"]);
+
+    assert.equal(health.ok, false);
+    assert.equal(health.missingKey, true);
+    assert.match(result.error, /还没有设置 DeepSeek API key/);
+    assert.equal(background.requests.length, 0);
+});

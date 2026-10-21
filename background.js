@@ -1,8 +1,9 @@
 // Background service worker for the Safari WebExtension build.
 // It talks to the DeepSeek OpenAI-compatible chat completions endpoint.
-importScripts("config.js");
+// The API key is entered in the popup and kept only in this browser's extension storage.
 const API_BASE_URL = "https://api.deepseek.com";
-const API_KEY = DEEPSEEK_API_KEY;
+const API_KEY_STORAGE_KEY = "deepseekApiKey";
+const MISSING_KEY_MESSAGE = "还没有设置 DeepSeek API key，请在扩展弹窗里填写";
 const MODEL = "deepseek-flash";
 const MODEL_ALIASES = ["deepseek-flash", "deepseek-v4-pro"];
 const MAX_CONCURRENT_REQUESTS = 8;
@@ -50,10 +51,15 @@ class TranslationError extends Error {
     }
 }
 
-function withAuthorization(extraHeaders = {}) {
+async function readApiKey() {
+    const stored = await storageGet([API_KEY_STORAGE_KEY]);
+    return String(stored?.[API_KEY_STORAGE_KEY] || "").trim();
+}
+
+function withAuthorization(apiKey, extraHeaders = {}) {
     return {
         ...extraHeaders,
-        "Authorization": `Bearer ${API_KEY}`
+        "Authorization": `Bearer ${apiKey}`
     };
 }
 
@@ -89,7 +95,7 @@ function findAvailableModelId(models) {
 }
 
 function describeHttpError(status, detail) {
-    if (status === 401) return "API key 无效，请检查 config.js";
+    if (status === 401) return "API key 无效，请在扩展弹窗里重新填写";
     if (status === 402) return "DeepSeek 账户余额不足";
     if (status === 429) return "请求太频繁，稍后再试";
     if (status >= 500) return "DeepSeek 服务暂时不可用";
@@ -112,10 +118,15 @@ async function fetchWithTimeout(url, options) {
 }
 
 async function checkHealth() {
+    const apiKey = await readApiKey();
+    if (!apiKey) {
+        return { ok: false, missingKey: true, error: MISSING_KEY_MESSAGE };
+    }
+
     try {
         const response = await fetchWithTimeout(`${API_BASE_URL}/v1/models`, {
             method: "GET",
-            headers: withAuthorization()
+            headers: withAuthorization(apiKey)
         });
 
         if (!response.ok) {
@@ -375,6 +386,9 @@ function estimateMaxTokens(texts) {
 }
 
 async function requestTranslations(protectedTexts, targetLang) {
+    const apiKey = await readApiKey();
+    if (!apiKey) throw new TranslationError(MISSING_KEY_MESSAGE);
+
     const body = JSON.stringify({
         model: resolveModelId(),
         messages: [
@@ -396,7 +410,7 @@ async function requestTranslations(protectedTexts, targetLang) {
 
     for (let attempt = 0; ; attempt++) {
         try {
-            return await runWithConcurrency(() => sendTranslationRequest(body, protectedTexts.length));
+            return await runWithConcurrency(() => sendTranslationRequest(apiKey, body, protectedTexts.length));
         } catch (error) {
             if (!error.retryable || attempt >= MAX_RETRIES) throw error;
             await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt + Math.random() * 300);
@@ -404,10 +418,10 @@ async function requestTranslations(protectedTexts, targetLang) {
     }
 }
 
-async function sendTranslationRequest(body, expectedCount) {
+async function sendTranslationRequest(apiKey, body, expectedCount) {
     const response = await fetchWithTimeout(`${API_BASE_URL}/v1/chat/completions`, {
         method: "POST",
-        headers: withAuthorization({ "Content-Type": "application/json" }),
+        headers: withAuthorization(apiKey, { "Content-Type": "application/json" }),
         body
     });
 

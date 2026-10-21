@@ -1,6 +1,7 @@
 const usingBrowserApi = typeof browser !== "undefined" && browser.runtime;
 const extensionApi = usingBrowserApi ? browser : chrome;
 const elementsToSave = ["sourceLang", "targetLang", "displayMode"];
+const API_KEY_STORAGE_KEY = "deepseekApiKey";
 
 function queryActiveTab() {
     if (usingBrowserApi) {
@@ -106,6 +107,61 @@ function setServiceStatus({ connected, message }) {
     translateBtn.innerText = connected ? "翻译本页" : "服务不可用";
 }
 
+function describeSavedKey(apiKey) {
+    if (!apiKey) return "sk-...";
+    return apiKey.length > 8 ? `已保存（…${apiKey.slice(-4)}）` : "已保存";
+}
+
+async function refreshKeyField() {
+    const result = await storageGet([API_KEY_STORAGE_KEY]);
+    const input = document.getElementById("apiKey");
+    input.value = "";
+    input.placeholder = describeSavedKey(result[API_KEY_STORAGE_KEY]);
+}
+
+async function refreshServiceStatus() {
+    setServiceStatus({ connected: false, message: "检测 DeepSeek 状态..." });
+    try {
+        const health = await sendRuntimeMessage({ action: "health" });
+        if (health?.ok) {
+            setServiceStatus({
+                connected: true,
+                message: "DeepSeek 已连接"
+            });
+        } else {
+            setServiceStatus({
+                connected: false,
+                message: health?.error || "无法连接 DeepSeek"
+            });
+            if (health?.missingKey) document.getElementById("apiKey").focus();
+        }
+    } catch (error) {
+        setServiceStatus({
+            connected: false,
+            message: error.message || "无法连接 DeepSeek"
+        });
+    }
+}
+
+async function saveApiKey() {
+    const apiKey = document.getElementById("apiKey").value.trim();
+    if (!apiKey) return;
+
+    await storageSet({ [API_KEY_STORAGE_KEY]: apiKey });
+    await refreshKeyField();
+    await refreshServiceStatus();
+}
+
+document.getElementById("saveKeyBtn").addEventListener("click", () => {
+    saveApiKey().catch(error => console.error("Failed to save API key:", error));
+});
+
+document.getElementById("apiKey").addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+        saveApiKey().catch(error => console.error("Failed to save API key:", error));
+    }
+});
+
 document.getElementById("translateBtn").addEventListener("click", () => {
     executeAction("translate").catch(error => console.error("Translate action failed:", error));
 });
@@ -127,6 +183,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (result.sourceLang) document.getElementById("sourceLang").value = result.sourceLang;
     if (result.targetLang) document.getElementById("targetLang").value = result.targetLang;
     if (result.displayMode) document.getElementById("displayMode").value = result.displayMode;
+    await refreshKeyField();
 
     const tab = await queryActiveTab();
     if (isInjectableTab(tab)) {
@@ -144,23 +201,5 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
-    try {
-        const health = await sendRuntimeMessage({ action: "health" });
-        if (health?.ok) {
-            setServiceStatus({
-                connected: true,
-                message: "DeepSeek 已连接"
-            });
-        } else {
-            setServiceStatus({
-                connected: false,
-                message: health?.error || "无法连接 DeepSeek"
-            });
-        }
-    } catch (error) {
-        setServiceStatus({
-            connected: false,
-            message: error.message || "无法连接 DeepSeek"
-        });
-    }
+    await refreshServiceStatus();
 });

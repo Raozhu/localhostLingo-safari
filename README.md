@@ -4,9 +4,11 @@ Safari WebExtension that translates web pages and text fields through the DeepSe
 
 ## Setup
 
-1. Copy `config.example.js` to `config.js` (git-ignored) and fill in `DEEPSEEK_API_KEY`.
-2. Run `scripts/install.sh` (needs Xcode). It builds, signs and installs `/Applications/Rao DeepSeek Translate.app`.
-3. Quit Safari (⌘Q), reopen it, and enable the extension in Safari Settings > Extensions.
+1. Run `scripts/install.sh` (needs Xcode, signed in with an Apple ID). It builds, signs and installs `/Applications/Rao DeepSeek Translate.app`.
+2. Quit Safari (⌘Q), reopen it, and enable the extension in Safari Settings > Extensions.
+3. Open the extension popup, paste your DeepSeek API key (from https://platform.deepseek.com/api_keys) and click 保存.
+
+The key is stored only in Safari's extension storage on this Mac. It is not part of the source code or the built app.
 
 ## How it works
 

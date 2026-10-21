@@ -1,12 +1,12 @@
 #!/bin/bash
 # Builds the Safari app that wraps this extension, signs it, and installs it to /Applications.
-# Usage: scripts/install.sh            (TEAM_ID=XXXXXXXXXX scripts/install.sh for another signing team)
+# Usage: scripts/install.sh   (signs with the first team signed in to Xcode; TEAM_ID=XXXXXXXXXX overrides it)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="Rao DeepSeek Translate"
 BUNDLE_ID="com.rao.localhostlingo.safari"
-TEAM_ID="${TEAM_ID:-M8K6Q3HMT7}"
+TEAM_ID="${TEAM_ID:-$(defaults read com.apple.dt.Xcode IDEProvisioningTeamByIdentifier 2>/dev/null | sed -n 's/.*teamID = \([A-Z0-9]*\);.*/\1/p' | head -1)}"
 BUILD_DIR="$ROOT/.build"
 STAGE_DIR="$BUILD_DIR/extension"
 PROJECT_DIR="$BUILD_DIR/xcode"
@@ -14,15 +14,15 @@ DERIVED_DIR="$BUILD_DIR/derived"
 INSTALL_PATH="/Applications/$APP_NAME.app"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
-if [ ! -f "$ROOT/config.js" ]; then
-    echo "缺少 config.js：先复制 config.example.js 为 config.js，并填入 DEEPSEEK_API_KEY" >&2
+if [ -z "$TEAM_ID" ]; then
+    echo "找不到签名团队：先在 Xcode > Settings > Accounts 登录 Apple ID，或用 TEAM_ID=XXXXXXXXXX 指定" >&2
     exit 1
 fi
 
 echo "› 准备扩展文件"
 rm -rf "$BUILD_DIR"
 mkdir -p "$STAGE_DIR"
-cp "$ROOT"/{manifest.json,background.js,content.js,popup.html,popup.js,config.js} "$STAGE_DIR/"
+cp "$ROOT"/{manifest.json,background.js,content.js,popup.html,popup.js} "$STAGE_DIR/"
 cp -R "$ROOT/icons" "$STAGE_DIR/"
 
 echo "› 生成 Xcode 工程"
