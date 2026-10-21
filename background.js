@@ -8,6 +8,9 @@ const OMLX_MODEL_ALIASES = ["deepseek-flash", "deepseek-v4-pro"];
 const OMLX_MAX_CONCURRENT_REQUESTS = 8;
 const DEFAULT_SOURCE_LANGUAGE = "English";
 const DEFAULT_TARGET_LANGUAGE = "Simplified Chinese";
+const TRANSLATION_SYSTEM_PROMPT = "You are a translation engine, not a chat assistant. Output only the translated text. Never explain, comment, apologize, ask for context, or add notes. If the text cannot be meaningfully translated (gibberish, made-up words, names, codes, unknown slang), output it exactly unchanged.";
+// Replies that explain why the text cannot be translated instead of translating it.
+const REFUSAL_PATTERN = /无法(?:翻译|确定|识别|进行|给出|提供)|不是(?:一个)?(?:可识别|常见|标准|有效)?的?(?:英文|英语|中文)?(?:单词|词汇)|没有(?:实际|标准|直接|明确)的?(?:含义|意思|译名|对应)|(?:虚构|自创)的?(?:词|单词)|请(?:提供|确认)|更多(?:的)?上下文|音译为|cannot be translated|can't translate|unable to translate|not a (?:recognized|valid|standard|real|common)|please provide|more context|no (?:direct|standard) translation/i;
 let resolvedOmlxModel = null;
 let activeOmlxRequests = 0;
 const pendingOmlxRequests = [];
@@ -123,6 +126,13 @@ function buildTranslationPrompt(sourceLang, targetLang, sentence) {
         return `Translate the following segment into ${promptTargetLang}, without additional explanation. Keep placeholders like __NTA__ unchanged.\n\n${sentence}`;
     }
     return `Translate the following segment into ${promptTargetLang}, without additional explanation.\n\n${sentence}`;
+}
+
+function looksLikeRefusal(translation, sourceText) {
+    const source = normalizeTextKey(sourceText).toLowerCase();
+    const output = normalizeTextKey(translation).toLowerCase();
+    if (!REFUSAL_PATTERN.test(output)) return false;
+    return output.includes(source) || output.length > Math.max(40, source.length * 3);
 }
 
 function protectNonTranslatableSegments(text) {
@@ -364,6 +374,10 @@ async function translateSingleItem(item, targetLang, modelId) {
             model: modelId,
             messages: [
                 {
+                    role: "system",
+                    content: TRANSLATION_SYSTEM_PROMPT
+                },
+                {
                     role: "user",
                     content: prompt
                 }
@@ -386,8 +400,10 @@ async function translateSingleItem(item, targetLang, modelId) {
         throw new Error("DeepSeek response missing translation content");
     }
 
+    if (looksLikeRefusal(content, item.text)) return item.text;
     const cleaned = cleanTranslationText(content, item.sourceLang, targetLang, item.text);
-    return restoreNonTranslatableSegments(cleaned, protectedInput.segments);
+    const restored = restoreNonTranslatableSegments(cleaned, protectedInput.segments);
+    return looksLikeRefusal(restored, item.text) ? item.text : restored;
 }
 
 async function translateWithOmlx(request) {
