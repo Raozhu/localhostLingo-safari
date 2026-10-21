@@ -13,8 +13,10 @@ const SPECIAL_REPLIES = {
 let browser;
 let page;
 let background;
+let replyDelayMs = 0;
 
-function fakeModel(items) {
+async function fakeModel(items) {
+    if (replyDelayMs) await new Promise(resolve => setTimeout(resolve, replyDelayMs));
     if (items.some(item => item.includes("failme"))) return chatResponse(null, 402);
     return items.map(item => SPECIAL_REPLIES[item] ?? upperCaseWords(item));
 }
@@ -56,6 +58,7 @@ after(async () => {
 });
 
 beforeEach(async () => {
+    replyDelayMs = 0;
     background = loadBackground(fakeModel);
     page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
     await page.exposeFunction("__backgroundHandle", message => background.handle(message));
@@ -134,7 +137,8 @@ test("shows the translation under the original in bilingual mode", async () => {
     assert.equal(await text("#docs"), "documentation");
 
     await runContent("revert");
-    assert.equal(await page.locator(".rao-tr-bilingual").count(), 0);
+    // The translation fades out before it is removed.
+    await page.waitForFunction(() => document.querySelectorAll(".rao-tr-bilingual").length === 0, null, { timeout: 2000 });
 });
 
 test("translates every line of the focused text field", async () => {
@@ -166,4 +170,14 @@ test("keeps plain-word folder names in GitHub file listings", async () => {
     await runContent("translate");
     await waitForText("#commit", "UPDATE THE EXAMPLES FOLDER");
     assert.equal(await text("#folder"), "examples");
+});
+
+test("shimmers while waiting and leaves no inline styles behind", async () => {
+    replyDelayMs = 600;
+    await runContent("translate");
+    await page.waitForFunction(() => /mask-image/.test(document.querySelector("#link").getAttribute("style") || ""), null, { timeout: 2000 });
+    assert.equal(await text("#link"), "Read the documentation for more details.");
+
+    await waitForText("#link", "READ THE DOCUMENTATION FOR MORE DETAILS.");
+    await page.waitForFunction(() => !document.querySelector("#link").hasAttribute("style"), null, { timeout: 2000 });
 });

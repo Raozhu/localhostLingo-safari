@@ -13,6 +13,7 @@ Safari WebExtension that translates web pages and text fields through the DeepSe
 - Model: `deepseek-flash` with thinking disabled, OpenAI-compatible `/v1/chat/completions`, JSON in and JSON out.
 - A paragraph is translated as one item. Inline markup (links, bold) is sent as `<g1>…</g1>` and kept on the same elements; code, icons and nested blocks are sent as `<x2/>` and left untouched. If the model breaks the tags, that paragraph falls back to text-node-by-text-node translation.
 - Only paragraphs near the viewport are translated; the rest follow as you scroll. Content added later (infinite scroll, SPA navigation, edited text) is translated automatically while the page is in translated mode.
+- While a paragraph waits for its translation it dims and a band of full-strength text drifts across it (a mask, so the site's own colors stay), out of step from the top of the screen down. The translation is then uncovered from left to right, the paragraph's height eases to its new size, and switching back to the original is a short fade. With Reduce Motion on, paragraphs only dim while waiting and nothing else animates.
 - Up to 12 paragraphs share one request; requests are retried on timeouts, 429 and 5xx. Failures show a short message in the page corner.
 - Translations are cached in `storage.local` (up to 8000 entries, oldest pruned first).
 - Text the model cannot translate (made-up words, names) stays as the original instead of an explanation.

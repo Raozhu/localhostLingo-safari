@@ -32,7 +32,14 @@
         const SCAN_DELAY_MS = 150;
         const FLUSH_DELAY_MS = 30;
         const TOAST_DURATION_MS = 6000;
-        const SPINNER_CHARS = ["|", "/", "-", "\\"];
+        // Shimmer while waiting, then a left-to-right reveal of the translation.
+        const SHIMMER_MS = 1800;
+        const SHIMMER_SPREAD_MS = 1200;
+        const WIPE_MS = 560;
+        const HEIGHT_MS = 280;
+        const SHIMMER_MASK = "linear-gradient(100deg, rgba(0,0,0,.38) 0%, rgba(0,0,0,.38) 42%, #000 50%, rgba(0,0,0,.38) 58%, rgba(0,0,0,.38) 100%)";
+        const WIPE_MASK = "linear-gradient(100deg, #000 0%, #000 44%, transparent 56%, transparent 100%)";
+        const BILINGUAL_RULE_COLOR = "rgba(77, 107, 254, 0.45)";
 
         const EXCLUDED_SELECTOR = [
             "pre, code, kbd, samp, var, tt, script, style, noscript, template, math, input, textarea, select, canvas, svg, audio, video, iframe",
@@ -54,8 +61,7 @@
         const waitingBatches = [];
         const pendingScanRoots = new Set();
         let scanTimer = null;
-        let spinnerTimer = null;
-        let spinnerIndex = 0;
+        const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
         let toastTimer = null;
         let lastToast = { message: "", at: 0 };
 
@@ -269,6 +275,7 @@
 
                 return {
                     text,
+                    element,
                     replace: translatedText => {
                         element.value = translatedText;
                         element.focus();
@@ -288,6 +295,7 @@
 
             return {
                 text,
+                element: editableRoot,
                 replace: translatedText => {
                     editableRoot.textContent = translatedText;
                     editableRoot.focus();
@@ -304,6 +312,9 @@
             const originalText = editableInfo.text;
             const sourceLang = await detectSourceLanguage(originalText);
             const targetLang = resolveSelectionTarget(sourceLang, selectionConfig);
+            const waiting = reduceMotion.matches
+                ? null
+                : editableInfo.element.animate([{ opacity: 1 }, { opacity: 0.45 }], { duration: 250, fill: "forwards" });
 
             try {
                 const response = await sendRuntimeMessage({
@@ -317,15 +328,18 @@
                     targetLang
                 });
 
+                waiting?.cancel();
                 const translatedText = response?.translatedArray?.[0];
                 if (translatedText) {
                     const leadingSpace = originalText.match(/^\s*/)?.[0] || "";
                     const trailingSpace = originalText.match(/\s*$/)?.[0] || "";
                     editableInfo.replace(leadingSpace + translatedText + trailingSpace);
+                    wipeIn(editableInfo.element);
                 } else {
                     showToast(response?.error || "没有拿到译文");
                 }
             } catch (error) {
+                waiting?.cancel();
                 showToast(error.message || "扩展通信失败");
             }
         }
@@ -662,7 +676,8 @@
                     items: [],
                     result: null,
                     bilingualElement: null,
-                    spinner: null,
+                    shimmer: null,
+                    shimmering: false,
                     changedWhileProcessing: false
                 };
                 units.set(root, unit);
@@ -756,27 +771,161 @@
 
         // ---------- Display ----------
 
-        function showTranslated(unit) {
-            if (!unit.result) return;
+        // Masks keep the site's own colors: the whole paragraph dims and an opaque band drifts across it.
+        const MASK_PROPERTIES = [
+            "maskImage", "maskSize", "maskRepeat", "maskPosition",
+            "webkitMaskImage", "webkitMaskSize", "webkitMaskRepeat", "webkitMaskPosition"
+        ];
+        const savedMasks = new WeakMap();
+        const maskOwners = new WeakMap();
+        const runningWipes = new WeakMap();
 
-            if (activeConfig.displayMode === "bilingual") {
-                showBilingual(unit);
-                return;
+        function setMask(element, image, owner) {
+            if (!savedMasks.has(element)) {
+                savedMasks.set(element, {
+                    hadStyleAttribute: element.hasAttribute("style"),
+                    values: MASK_PROPERTIES.map(property => [property, element.style[property]])
+                });
             }
-
-            for (const [node, value] of unit.result.assignments) {
-                let record = textRecords.get(node);
-                if (!record || node.nodeValue !== record.translated) {
-                    record = { original: node.nodeValue, translated: value };
-                    textRecords.set(node, record);
-                } else {
-                    record.translated = value;
-                }
-                if (node.nodeValue !== value) node.nodeValue = value;
+            maskOwners.set(element, owner);
+            for (const prefix of ["mask", "webkitMask"]) {
+                element.style[`${prefix}Image`] = image;
+                element.style[`${prefix}Size`] = "300% 100%";
+                element.style[`${prefix}Repeat`] = "no-repeat";
+                element.style[`${prefix}Position`] = "100% 0";
             }
         }
 
-        function showBilingual(unit) {
+        function clearMask(element, owner) {
+            if (maskOwners.get(element) !== owner) return;
+            const saved = savedMasks.get(element);
+            saved?.values.forEach(([property, value]) => {
+                element.style[property] = value;
+            });
+            // Leave no empty style="" behind on elements that had none.
+            if (saved && !saved.hadStyleAttribute && !(element.getAttribute("style") || "").trim()) {
+                element.removeAttribute("style");
+            }
+            savedMasks.delete(element);
+            maskOwners.delete(element);
+        }
+
+        function maskSweepFrames() {
+            return [
+                { maskPosition: "100% 0", webkitMaskPosition: "100% 0" },
+                { maskPosition: "0 0", webkitMaskPosition: "0 0" }
+            ];
+        }
+
+        function isOnScreen(element) {
+            const rect = element.getBoundingClientRect();
+            return rect.bottom > 0 && rect.top < window.innerHeight && rect.width > 0;
+        }
+
+        function canAnimate(element) {
+            return !reduceMotion.matches && element !== document.body && element.isConnected;
+        }
+
+        function startShimmer(unit) {
+            const root = unit.root;
+            if (unit.shimmering || root === document.body || window.__currentDisplay !== "translated") return;
+            unit.shimmering = true;
+            setMask(root, SHIMMER_MASK, unit);
+            if (reduceMotion.matches) return;
+
+            // Paragraphs are out of step like a wave running down the screen: higher ones lead.
+            const top = Math.max(0, Math.min(window.innerHeight, root.getBoundingClientRect().top));
+            const delay = -(SHIMMER_SPREAD_MS - (top / window.innerHeight) * SHIMMER_SPREAD_MS);
+            unit.shimmer = root.animate(maskSweepFrames(), {
+                duration: SHIMMER_MS,
+                iterations: Infinity,
+                delay,
+                easing: "cubic-bezier(.45, 0, .55, 1)"
+            });
+        }
+
+        function stopShimmer(unit) {
+            if (!unit.shimmering) return;
+            unit.shimmering = false;
+            unit.shimmer?.cancel();
+            unit.shimmer = null;
+            clearMask(unit.root, unit);
+        }
+
+        // The new text is uncovered from left to right, the way the shimmer was moving.
+        function wipeIn(element) {
+            if (!canAnimate(element)) return;
+            cancelWipe(element);
+            const owner = {};
+            setMask(element, WIPE_MASK, owner);
+            const animation = element.animate([
+                { maskPosition: "100% 0", webkitMaskPosition: "100% 0", filter: "blur(1.5px)" },
+                { maskPosition: "0 0", webkitMaskPosition: "0 0", filter: "blur(0)" }
+            ], { duration: WIPE_MS, easing: "cubic-bezier(.4, 0, .2, 1)" });
+            runningWipes.set(element, { animation, owner });
+            animation.finished
+                .catch(() => {})
+                .then(() => {
+                    clearMask(element, owner);
+                    if (runningWipes.get(element)?.owner === owner) runningWipes.delete(element);
+                });
+        }
+
+        function cancelWipe(element) {
+            const wipe = element && runningWipes.get(element);
+            if (!wipe) return;
+            runningWipes.delete(element);
+            wipe.animation.cancel();
+            clearMask(element, wipe.owner);
+        }
+
+        // Keeps the content below from jumping when the translation is shorter or longer.
+        function changeWithHeightTransition(element, change) {
+            const display = canAnimate(element) ? window.getComputedStyle(element).display : "";
+            const animate = display === "block" || display === "list-item";
+            const before = animate ? element.getBoundingClientRect().height : 0;
+            change();
+            if (!animate) return;
+
+            const after = element.getBoundingClientRect().height;
+            if (Math.abs(after - before) < 2) return;
+            element.animate(
+                [{ height: `${before}px`, overflow: "hidden" }, { height: `${after}px`, overflow: "hidden" }],
+                { duration: HEIGHT_MS, easing: "cubic-bezier(.4, 0, .2, 1)" }
+            );
+        }
+
+        function showTranslated(unit, animated = false) {
+            if (!unit.result) return;
+            const animate = animated && canAnimate(unit.root) && isOnScreen(unit.root);
+
+            if (activeConfig.displayMode === "bilingual") {
+                showBilingual(unit, animate);
+                return;
+            }
+
+            const apply = () => {
+                for (const [node, value] of unit.result.assignments) {
+                    let record = textRecords.get(node);
+                    if (!record || node.nodeValue !== record.translated) {
+                        record = { original: node.nodeValue, translated: value };
+                        textRecords.set(node, record);
+                    } else {
+                        record.translated = value;
+                    }
+                    if (node.nodeValue !== value) node.nodeValue = value;
+                }
+            };
+
+            if (!animate) {
+                apply();
+                return;
+            }
+            changeWithHeightTransition(unit.root, apply);
+            wipeIn(unit.root);
+        }
+
+        function showBilingual(unit, animate) {
             const { bilingualText, originalText } = unit.result;
             if (!bilingualText || bilingualText === originalText) return;
 
@@ -787,55 +936,57 @@
                 element.setAttribute("translate", "no");
                 const isBlock = originalText.length > 40 || /[.!?。！？]\s*$/.test(originalText);
                 element.style.cssText = isBlock
-                    ? "display:block;margin-top:0.25em;opacity:0.85;"
-                    : "margin-left:0.4em;opacity:0.85;";
+                    ? `display:block;margin-top:0.25em;padding-left:0.6em;border-left:1px solid ${BILINGUAL_RULE_COLOR};opacity:0.78;`
+                    : "margin-left:0.4em;opacity:0.78;";
                 unit.bilingualElement = element;
             }
             element.textContent = bilingualText;
-            if (element.parentNode !== unit.root) unit.root.appendChild(element);
-        }
+            if (element.parentNode === unit.root) return;
 
-        function showOriginal(unit) {
-            unit.bilingualElement?.remove();
-            if (!unit.result) return;
-
-            for (const node of unit.result.assignments.keys()) {
-                const record = textRecords.get(node);
-                if (record && node.nodeValue === record.translated) {
-                    node.nodeValue = record.original;
-                }
-            }
-        }
-
-        function setSpinner(unit, visible) {
-            if (!visible) {
-                unit.spinner?.remove();
-                unit.spinner = null;
-                if (![...units.values()].some(item => item.spinner)) {
-                    clearInterval(spinnerTimer);
-                    spinnerTimer = null;
-                }
+            if (!animate) {
+                unit.root.appendChild(element);
                 return;
             }
+            changeWithHeightTransition(unit.root, () => unit.root.appendChild(element));
+            wipeIn(element);
+        }
 
-            if (unit.spinner || window.__currentDisplay !== "translated") return;
-            const spinner = document.createElement("span");
-            spinner.className = `${OWN_CLASS} rao-tr-spinner`;
-            spinner.setAttribute("translate", "no");
-            spinner.style.cssText = "margin-left:5px;font-family:monospace;color:#ff5722;font-weight:bold;";
-            spinner.textContent = SPINNER_CHARS[spinnerIndex % SPINNER_CHARS.length];
-            unit.root.appendChild(spinner);
-            unit.spinner = spinner;
+        function showOriginal(unit, animated = false) {
+            const animate = animated && canAnimate(unit.root) && isOnScreen(unit.root);
+            const bilingualElement = unit.bilingualElement;
+            cancelWipe(unit.root);
+            cancelWipe(bilingualElement);
 
-            if (!spinnerTimer) {
-                spinnerTimer = setInterval(() => {
-                    spinnerIndex++;
-                    const char = SPINNER_CHARS[spinnerIndex % SPINNER_CHARS.length];
-                    units.forEach(item => {
-                        if (item.spinner) item.spinner.textContent = char;
-                    });
-                }, 100);
+            if (bilingualElement?.isConnected) {
+                if (!animate) {
+                    bilingualElement.remove();
+                } else {
+                    bilingualElement.animate([{ opacity: 0.78 }, { opacity: 0 }], { duration: 160 })
+                        .finished
+                        .catch(() => {})
+                        .then(() => {
+                            if (window.__currentDisplay === "translated") return;
+                            changeWithHeightTransition(unit.root, () => bilingualElement.remove());
+                        });
+                }
             }
+            if (!unit.result) return;
+
+            const restore = () => {
+                for (const node of unit.result.assignments.keys()) {
+                    const record = textRecords.get(node);
+                    if (record && node.nodeValue === record.translated) {
+                        node.nodeValue = record.original;
+                    }
+                }
+            };
+
+            if (!animate || activeConfig?.displayMode === "bilingual") {
+                restore();
+                return;
+            }
+            changeWithHeightTransition(unit.root, restore);
+            unit.root.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 200, easing: "ease-out" });
         }
 
         // ---------- Scheduling ----------
@@ -938,7 +1089,7 @@
             const targetLang = activeConfig.targetLang;
             batchUnits.forEach(unit => {
                 unit.status = "processing";
-                setSpinner(unit, true);
+                startShimmer(unit);
             });
 
             try {
@@ -951,6 +1102,8 @@
                 if (!response?.translatedArray) {
                     throw new Error(response?.error || "没有拿到译文");
                 }
+
+                batchUnits.forEach(stopShimmer);
 
                 // The user switched language while this batch was running.
                 if (targetLang !== activeConfig.targetLang) {
@@ -969,11 +1122,12 @@
                 }
             } catch (error) {
                 batchUnits.forEach(unit => {
+                    stopShimmer(unit);
                     unit.status = "error";
                 });
                 showToast(error.message || "扩展通信失败");
             } finally {
-                batchUnits.forEach(unit => setSpinner(unit, false));
+                batchUnits.forEach(stopShimmer);
                 activeBatches--;
                 const next = waitingBatches.shift();
                 if (next) next();
@@ -1000,7 +1154,7 @@
             unit.result = result;
             unit.status = "done";
             if (window.__currentDisplay === "translated") {
-                showTranslated(unit);
+                showTranslated(unit, true);
             }
         }
 
@@ -1013,8 +1167,8 @@
             scanTimer = null;
             pendingScanRoots.clear();
             units.forEach(unit => {
-                showOriginal(unit);
-                setSpinner(unit, false);
+                stopShimmer(unit);
+                showOriginal(unit, true);
             });
         }
 
@@ -1026,7 +1180,7 @@
             const modeChanged = activeConfig && activeConfig.displayMode !== nextConfig.displayMode;
 
             if (languageChanged || modeChanged) {
-                units.forEach(showOriginal);
+                units.forEach(unit => showOriginal(unit));
             }
             if (languageChanged) {
                 units.forEach(unit => {
@@ -1045,7 +1199,7 @@
                     units.delete(unit.root);
                     return;
                 }
-                if (unit.status === "done") showTranslated(unit);
+                if (unit.status === "done") showTranslated(unit, true);
                 if (unit.status === "error") unit.status = "idle";
                 if (unit.status === "idle") watchUnit(unit);
             });
