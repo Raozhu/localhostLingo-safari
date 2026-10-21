@@ -1,39 +1,19 @@
-# Rao oMLX Translate Safari Build
+# Rao DeepSeek Translate Safari Build
 
-This directory is the Safari WebExtension source for `Rao oMLX Translate`.
+This directory is the Safari WebExtension source. The Xcode project is generated on demand and is not checked in.
 
-## Local service
-
-- oMLX URL: `http://127.0.0.1:9510`
-- API key: `raoz`
-- Model: `HY-MT1.5-1.8B-8bit`
-- Endpoint used by the extension: `/v1/chat/completions`
-- Browser translation concurrency: `2`
-
-The extension also checks `/v1/models` to make sure the model is available before enabling translation.
-
-GitHub repository chrome, file paths, filenames, usernames, code flags, acronyms, and CamelCase identifiers are skipped or protected so code/documentation pages remain readable after translation.
-
-Shortcuts:
-
-- `Option+A`: toggle page translation.
-- `Control+S`: translate and replace the full text in the focused input field.
-
-## Generate the Safari Xcode project
-
-This Mac currently has Command Line Tools selected, not the full Xcode developer directory. After installing Xcode, run:
+## Install
 
 ```sh
-sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-xcrun safari-web-extension-packager /Users/rao/Desktop/localhostLingo-safari-src \
-  --project-location /Users/rao/Desktop/localhostLingoSafari \
-  --app-name "Rao oMLX Translate" \
-  --bundle-identifier com.rao.localhostlingo.safari \
-  --swift \
-  --macos-only \
-  --copy-resources \
-  --no-open \
-  --no-prompt
+scripts/install.sh
 ```
 
-Then open the generated Xcode project, run the app target, and enable the extension in Safari Settings > Extensions.
+The script:
+
+1. copies only the extension files (manifest, scripts, popup, icons) into `.build/extension`;
+2. runs `xcrun safari-web-extension-packager` to generate a macOS Swift app project;
+3. fixes the app bundle id to `com.rao.localhostlingo.safari` (the extension id `com.rao.localhostlingo.safari.Extension` must start with it);
+4. builds Release with automatic signing for the first team signed in to Xcode (override with `TEAM_ID=...`) and the version from `manifest.json`;
+5. replaces `/Applications/Rao DeepSeek Translate.app`, unregisters and deletes the build copy so Safari lists the extension only once, and opens the app.
+
+After installing, quit Safari (⌘Q) and reopen it so the new version loads. The first time, enable the extension in Safari Settings > Extensions, then enter your DeepSeek API key in the extension popup. The key lives only in Safari's extension storage; it is never bundled into the app.

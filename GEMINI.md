@@ -1,64 +1,20 @@
-# GEMINI.md - LocalhostLingo Safari/oMLX 开发规范
+# GEMINI.md - Rao DeepSeek Translate 开发规范
 
-本文件定义这个 Safari WebExtension 版本的开发约束。
+本文件定义这个 Safari WebExtension 的开发约束。
 
 ## 1. 核心架构原则
-- **本地优先 (Local-First)**：所有 AI 功能必须通过本机 oMLX 服务实现，默认地址为 `http://127.0.0.1:9510`。
-- **固定模型与鉴权**：翻译模型固定为 `HY-MT1.5-1.8B-8bit`，请求头使用 `Authorization: Bearer raoz`。
-- **性能与并发**：
-    - 文本处理必须维持分批逻辑（10 项/500 字符），严禁一次性向模型发送超大全文。
-    - 浏览器和后台 oMLX 请求并发数上限保持为 2；本机测试显示这比高并发有更好的可感知延迟。
-- **无损还原**：任何翻译逻辑必须确保能够通过 `__translatedNodesMap` 还原原文，不得破坏 DOM 结构。
-- **输入框翻译**：`Control+S` 必须翻译并替换当前聚焦输入框的全文，优先支持 `input`、`textarea`，其次支持 `contenteditable`。
-- **技术内容保护**：GitHub 仓库页的用户名、仓库名、breadcrumbs、文件树、文件元信息、独立文件名、路径、命令参数、缩写和 CamelCase 标识符必须跳过或占位保护，不得送模型自由改写。
+- **模型与鉴权**：翻译走 DeepSeek（`https://api.deepseek.com/v1/chat/completions`），模型 `deepseek-flash`，必须带 `thinking: { type: "disabled" }`。API key 由用户在弹窗里填写，只存在扩展的 `storage.local`（键名 `deepseekApiKey`），后台每次请求时读取；不得写进源码、配置文件或打包进 App。没有 key 时不发请求，直接提示去弹窗设置。
+- **请求格式**：系统提示 + 用户消息 `{"target", "items"}`，`response_format` 为 `json_object`，模型返回 `{"translations"}`，条数必须与输入一致；不一致时后台把这一组对半拆开重试。
+- **分批与并发**：页面每批最多 12 段 / 2500 字符，同时最多 4 批；后台每个请求最多 20 段 / 4000 字符，同时最多 8 个请求。超时、429、5xx 自动重试 2 次。
+- **按段落翻译**：一个块级元素是一个翻译单元。内联元素写成 `<gN>…</gN>`，代码、图标、嵌套块写成 `<xN/>`；译文只回写到原有文本节点，不新建、不移动元素。标签被模型打乱时，这一段退回逐个文本节点翻译。
+- **按需翻译**：只翻视口附近（上下 600px）的段落；翻译状态下用 MutationObserver 自动补翻新增或被页面改动的文字。
+- **流光动效**：等待翻译的段落用遮罩变淡，一道不透明的光带从左往右扫过（1.8 秒一轮，按段落在屏幕上的位置错开，上面的先走）；译文从左往右显现（0.56 秒），高度平滑过渡（0.28 秒）；切回原文是 0.2 秒淡入。只用 `element.style` 和 Web Animations API，不注入 `<style>`，结束后恢复元素原来的行内样式（原来没有 `style` 属性的要删掉）。遵守「减弱动态效果」。
+- **无损还原**：每个被改的文本节点都记录原文和译文；切回原文必须恢复到完全一致的 DOM。双语模式只追加带 `rao-tr-own` 类名的元素，还原时移除。
+- **缓存**：译文按「缓存版本 + 模型 + 目标语言 + 原文」存在 `storage.local`。修改提示词时必须提升 `CACHE_VERSION`。
+- **翻不了就保留原文**：模型解释「无法翻译」、要上下文等回复一律退回原文，不显示给用户。
+- **输入框翻译**：`Control+S` 必须翻译并替换当前聚焦输入框的全文（保留所有换行），优先支持 `input`、`textarea`，其次支持 `contenteditable`。
+- **技术内容保护**：GitHub 仓库页的用户名、仓库名、breadcrumbs、文件树、文件和目录名、文件元信息、路径、命令参数、缩写和 CamelCase 标识符必须跳过或占位保护（`__NTA__`），不得送模型自由改写。`code`/`pre`、表单、可编辑区域不翻译。
 
-## 2. oMLX Prompt 规范
-
-每条文本必须用 HY-MT1.5 模型要求的纯文本 completion 格式。
-
-源语言是中文时使用中文指令：
-
-```text
-将以下文本翻译为<target language>，注意只需要输出翻译后的结果，不要额外解释：
-
-<source_text>
-```
-
-其他源语言使用英文指令：
-
-```text
-Translate the following segment into <target language>, without additional explanation.
-
-<source_text>
-```
-
-`sourceLang=auto` 时，必须在 content script 中先检测出具体语言名，再发送给后台；后台不得向模型发送 `auto`。
-
-## 3. 代码实现规范
-- **接口形态**：使用 `/v1/chat/completions`，因为 HY-MT 依赖 chat template；不要回退到 raw `/v1/completions`。
-- **并发翻译**：后台必须通过全局队列限制最多 2 个 oMLX 请求同时运行；重复文本仍需去重后复用结果。
-- **DOM 过滤逻辑**：必须严格排除 `pre`, `code`, `script`、`.notranslate`、`[translate="no"]`、GitHub 文件/仓库元信息等区域。
-- **语言互转**：输入框翻译时，如果文本已经是当前目标语言，则翻译回当前源语言；当源语言为 `auto` 且目标为中文时，英文转中文、中文转英文。
-- **原生技术栈**：保持使用原生 JavaScript 和 Vanilla CSS，不引入大型库或框架。
-- **跨浏览器 API**：保留轻量 `browser.*` / `chrome.*` 兼容包装，方便 Safari 和调试环境共用源码。
-
-## 4. Safari 打包
-- 源码目录：`/Users/rao/Desktop/localhostLingo-safari-src`
-- 目标 Xcode 项目目录：`/Users/rao/Desktop/localhostLingoSafari`
-- App 名称：`Rao oMLX Translate`
-- Bundle ID：`com.rao.localhostlingo.safari`
-
-完整 Xcode 安装后执行：
-
-```sh
-sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-xcrun safari-web-extension-packager /Users/rao/Desktop/localhostLingo-safari-src \
-  --project-location /Users/rao/Desktop/localhostLingoSafari \
-  --app-name "Rao oMLX Translate" \
-  --bundle-identifier com.rao.localhostlingo.safari \
-  --swift \
-  --macos-only \
-  --copy-resources \
-  --no-open \
-  --no-prompt
-```
+## 2. 验证
+- `npm test`：后台（假的 DeepSeek 接口）和页面脚本（WebKit）测试，不需要 key。
+- 改完用 `scripts/install.sh` 安装，退出并重开 Safari 后在真实页面上确认。

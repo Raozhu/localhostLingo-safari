@@ -78,6 +78,57 @@
       box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
     }
 
+    /* API key 输入：与下拉框同一套边框和圆角 */
+    .key-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .key-row input {
+      flex: 1;
+      min-width: 0;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-family: inherit;
+      color: #111827;
+      background-color: #FFFFFF;
+      border: 1px solid #D1D5DB;
+      border-radius: 10px;
+      outline: none;
+      transition: all 0.2s ease;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+
+    .key-row input:hover {
+      border-color: #9CA3AF;
+    }
+
+    .key-row input:focus {
+      border-color: #3B82F6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+
+    #saveKeyBtn {
+      width: auto;
+      padding: 10px 14px;
+      background-color: #111827;
+      color: #FFFFFF;
+    }
+
+    #saveKeyBtn:hover {
+      background-color: #374151;
+    }
+
+    .key-hint {
+      margin-top: 6px;
+      font-size: 11px;
+      color: #9CA3AF;
+    }
+
+    .key-hint a {
+      color: #6B7280;
+    }
+
     /* 按钮基础样式 */
     .btn-group {
       margin-top: 24px;
@@ -184,7 +235,7 @@
 <body>
   
   <div class="header">
-    <h1>Rao oMLX 翻译</h1>
+    <h1>Rao DeepSeek 翻译</h1>
   </div>
 
   <div class="select-group">
@@ -196,6 +247,16 @@
       <option value="English">英文</option>
       <option value="Japanese">日文</option>
       <option value="Korean">韩文</option>
+      <option value="French">法文</option>
+      <option value="German">德文</option>
+      <option value="Spanish">西班牙文</option>
+      <option value="Portuguese">葡萄牙文</option>
+      <option value="Italian">意大利文</option>
+      <option value="Russian">俄文</option>
+      <option value="Arabic">阿拉伯文</option>
+      <option value="Vietnamese">越南文</option>
+      <option value="Thai">泰文</option>
+      <option value="Indonesian">印尼文</option>
     </select>
   </div>
   
@@ -207,9 +268,36 @@
       <option value="English">英文</option>
       <option value="Japanese">日文</option>
       <option value="Korean">韩文</option>
+      <option value="French">法文</option>
+      <option value="German">德文</option>
+      <option value="Spanish">西班牙文</option>
+      <option value="Portuguese">葡萄牙文</option>
+      <option value="Italian">意大利文</option>
+      <option value="Russian">俄文</option>
+      <option value="Arabic">阿拉伯文</option>
+      <option value="Vietnamese">越南文</option>
+      <option value="Thai">泰文</option>
+      <option value="Indonesian">印尼文</option>
     </select>
   </div>
   
+  <div class="select-group">
+    <label>显示方式 (Display)</label>
+    <select id="displayMode">
+      <option value="replace" selected>替换原文</option>
+      <option value="bilingual">双语对照</option>
+    </select>
+  </div>
+
+  <div class="select-group">
+    <label for="apiKey">DeepSeek API Key</label>
+    <div class="key-row">
+      <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
+      <button id="saveKeyBtn" type="button">保存</button>
+    </div>
+    <p class="key-hint">只保存在本机 Safari 里，不会上传到别处。<a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">获取 key</a></p>
+  </div>
+
   <div class="btn-group">
     <button id="translateBtn">翻译本页</button>
     <button id="revertBtn" disabled>查看原文</button>
@@ -218,7 +306,7 @@
   <!-- 底部状态指示器 -->
   <div class="status-bar">
     <div id="statusDot" class="status-dot"></div>
-    <span id="statusText" class="status-text">检测 oMLX 状态...</span>
+    <span id="statusText" class="status-text">检测 DeepSeek 状态...</span>
   </div>
 
   <script src="popup.js"></script>
