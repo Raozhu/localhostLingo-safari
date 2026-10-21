@@ -1,6 +1,6 @@
 const usingBrowserApi = typeof browser !== "undefined" && browser.runtime;
 const extensionApi = usingBrowserApi ? browser : chrome;
-const elementsToSave = ["sourceLang", "targetLang"];
+const elementsToSave = ["sourceLang", "targetLang", "displayMode"];
 
 function queryActiveTab() {
     if (usingBrowserApi) {
@@ -74,20 +74,18 @@ function isInjectableTab(tab) {
 async function executeAction(action) {
     const sourceLang = document.getElementById("sourceLang").value;
     const targetLang = document.getElementById("targetLang").value;
+    const displayMode = document.getElementById("displayMode").value;
     const tab = await queryActiveTab();
 
     if (!tab?.id || !isInjectableTab(tab)) return;
 
     await executeScript({
         target: { tabId: tab.id },
-        func: (nextAction, source, target) => {
+        func: (nextAction, nextConfig) => {
             window.__translationAction = nextAction;
-            window.__translationConfig = {
-                sourceLang: source,
-                targetLang: target
-            };
+            window.__translationConfig = nextConfig;
         },
-        args: [action, sourceLang, targetLang]
+        args: [action, { sourceLang, targetLang, displayMode }]
     });
 
     await executeScript({
@@ -128,6 +126,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const result = await storageGet(elementsToSave);
     if (result.sourceLang) document.getElementById("sourceLang").value = result.sourceLang;
     if (result.targetLang) document.getElementById("targetLang").value = result.targetLang;
+    if (result.displayMode) document.getElementById("displayMode").value = result.displayMode;
 
     const tab = await queryActiveTab();
     if (isInjectableTab(tab)) {

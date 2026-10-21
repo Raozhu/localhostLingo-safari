@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rao oMLX Translate - Quality Test</title>
+    <title>Rao DeepSeek Translate - Quality Test</title>
     <style>
         * {
             box-sizing: border-box;
@@ -134,7 +134,7 @@
 <body>
 <main>
     <header>
-        <h1>Rao oMLX Translate - Quality Test</h1>
+        <h1>Rao DeepSeek Translate - Quality Test</h1>
         <p class="hint">Use this page to compare translation quality across different content types. Code blocks, notranslate areas, URLs, emails, and pure numbers should stay unchanged.</p>
     </header>
 
@@ -167,7 +167,7 @@
 
     <section>
         <h2>4. Technical Text</h2>
-        <p>The extension sends batched prompts to the local oMLX server and restores the original text nodes when the user switches back to the source page.</p>
+        <p>The extension sends batched prompts to the DeepSeek API and restores the original text nodes when the user switches back to the source page.</p>
         <p>The API returns a list of choices, and each item includes an index that must be used to preserve the original order of the prompts.</p>
         <p>When the request fails, the UI should display a recoverable error instead of replacing the page text with an empty response.</p>
         <p>Keep terms such as <code>service worker</code>, <code>content script</code>, <code>manifest.json</code>, and <code>Authorization: Bearer</code> readable after translation.</p>

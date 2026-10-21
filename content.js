@@ -1,7 +1,8 @@
 (async function() {
     const DEFAULT_CONFIG = {
         sourceLang: "auto",
-        targetLang: "Simplified Chinese"
+        targetLang: "Simplified Chinese",
+        displayMode: "replace"
     };
 
     const config = {
@@ -9,510 +10,1064 @@
         ...(window.__translationConfig || {})
     };
     const action = window.__translationAction || "translate";
-    const usingBrowserApi = typeof browser !== "undefined" && browser.runtime;
-    const extensionApi = usingBrowserApi ? browser : chrome;
 
-    window.__translatedNodesMap = window.__translatedNodesMap || new Map();
-    window.__hasTranslated = window.__hasTranslated || false;
-    window.__currentDisplay = window.__currentDisplay || "original";
-
-    function sendRuntimeMessage(message) {
-        if (usingBrowserApi) {
-            return extensionApi.runtime.sendMessage(message);
-        }
-
-        return new Promise((resolve, reject) => {
-            extensionApi.runtime.sendMessage(message, response => {
-                const error = extensionApi.runtime.lastError;
-                if (error) {
-                    reject(new Error(error.message));
-                    return;
-                }
-                resolve(response);
-            });
-        });
+    // The script is injected again for every action; page state lives in one translator per page.
+    if (!window.__raoTranslator) {
+        window.__raoTranslator = createTranslator();
     }
+    await window.__raoTranslator.run(action, config);
 
-    function mapLanguageCode(languageCode) {
-        const code = String(languageCode || "").toLowerCase();
-        if (code.startsWith("zh-hant") || code === "zh-tw" || code === "zh-hk") return "Traditional Chinese";
-        if (code.startsWith("zh")) return "Simplified Chinese";
-        if (code.startsWith("en")) return "English";
-        if (code.startsWith("ja")) return "Japanese";
-        if (code.startsWith("ko")) return "Korean";
-        if (code.startsWith("fr")) return "French";
-        if (code.startsWith("de")) return "German";
-        if (code.startsWith("es")) return "Spanish";
-        if (code.startsWith("it")) return "Italian";
-        if (code.startsWith("pt")) return "Portuguese";
-        if (code.startsWith("ru")) return "Russian";
-        if (code.startsWith("ar")) return "Arabic";
-        return null;
-    }
+    function createTranslator() {
+        const usingBrowserApi = typeof browser !== "undefined" && browser.runtime;
+        const extensionApi = usingBrowserApi ? browser : chrome;
 
-    async function detectLanguageWithApi(text) {
-        if (usingBrowserApi && extensionApi.i18n?.detectLanguage) {
-            try {
-                return await extensionApi.i18n.detectLanguage(text);
-            } catch (error) {
-                return null;
+        const OWN_CLASS = "rao-tr-own";
+        const BATCH_MAX_ITEMS = 12;
+        const BATCH_MAX_CHARS = 2500;
+        const MAX_CONCURRENT_BATCHES = 4;
+        // Larger paragraphs are translated text node by text node instead of as one tagged item.
+        const MAX_UNIT_CHARS = 3000;
+        const MAX_UNIT_TAGS = 40;
+        const VIEWPORT_MARGIN = "600px 0px";
+        const SCAN_DELAY_MS = 150;
+        const FLUSH_DELAY_MS = 30;
+        const TOAST_DURATION_MS = 6000;
+        const SPINNER_CHARS = ["|", "/", "-", "\\"];
+
+        const EXCLUDED_SELECTOR = [
+            "pre, code, kbd, samp, var, tt, script, style, noscript, template, math, input, textarea, select, canvas, svg, audio, video, iframe",
+            ".notranslate, [translate=\"no\"]",
+            ".katex, .MathJax, .mjx-chtml",
+            ".material-icons, [class^=\"fa-\"], [class*=\" fa-\"], [class^=\"icon-\"], [class*=\" icon-\"]",
+            "[contenteditable=\"\"], [contenteditable=\"true\"], [contenteditable=\"plaintext-only\"]",
+            `.${OWN_CLASS}`
+        ].join(", ");
+
+        let activeConfig = null;
+        // Unit = one block element whose inline content is translated as a single item.
+        const units = new Map();
+        // Text node -> { original, translated } so the page can switch back and forth.
+        const textRecords = new WeakMap();
+        const queue = [];
+        let flushTimer = null;
+        let activeBatches = 0;
+        const waitingBatches = [];
+        const pendingScanRoots = new Set();
+        let scanTimer = null;
+        let spinnerTimer = null;
+        let spinnerIndex = 0;
+        let toastTimer = null;
+        let lastToast = { message: "", at: 0 };
+
+        const intersectionObserver = new IntersectionObserver(onIntersection, { rootMargin: VIEWPORT_MARGIN });
+        const mutationObserver = new MutationObserver(onMutations);
+
+        window.__hasTranslated = window.__hasTranslated || false;
+        window.__currentDisplay = window.__currentDisplay || "original";
+
+        // ---------- Messaging ----------
+
+        function sendRuntimeMessage(message) {
+            if (usingBrowserApi) {
+                return extensionApi.runtime.sendMessage(message);
             }
-        }
 
-        if (typeof chrome !== "undefined" && chrome.i18n?.detectLanguage) {
-            return new Promise(resolve => {
-                chrome.i18n.detectLanguage(text, result => resolve(result || null));
+            return new Promise((resolve, reject) => {
+                extensionApi.runtime.sendMessage(message, response => {
+                    const error = extensionApi.runtime.lastError;
+                    if (error) {
+                        reject(new Error(error.message));
+                        return;
+                    }
+                    resolve(response);
+                });
             });
         }
 
-        return null;
-    }
+        // ---------- Language detection ----------
 
-    function detectLanguageByText(text) {
-        if (/[\u3040-\u30ff]/.test(text)) return "Japanese";
-        if (/[\uac00-\ud7af]/.test(text)) return "Korean";
-        if (/[\u4e00-\u9fff]/.test(text)) return "Simplified Chinese";
-        if (/[a-zA-Z]/.test(text)) return "English";
-        return "English";
-    }
+        function mapLanguageCode(languageCode) {
+            const code = String(languageCode || "").toLowerCase();
+            if (code.startsWith("zh-hant") || code === "zh-tw" || code === "zh-hk") return "Traditional Chinese";
+            if (code.startsWith("zh")) return "Simplified Chinese";
+            if (code.startsWith("en")) return "English";
+            if (code.startsWith("ja")) return "Japanese";
+            if (code.startsWith("ko")) return "Korean";
+            if (code.startsWith("fr")) return "French";
+            if (code.startsWith("de")) return "German";
+            if (code.startsWith("es")) return "Spanish";
+            if (code.startsWith("it")) return "Italian";
+            if (code.startsWith("pt")) return "Portuguese";
+            if (code.startsWith("ru")) return "Russian";
+            if (code.startsWith("ar")) return "Arabic";
+            if (code.startsWith("vi")) return "Vietnamese";
+            if (code.startsWith("th")) return "Thai";
+            if (code.startsWith("id")) return "Indonesian";
+            return null;
+        }
 
-    async function detectSourceLanguage(text) {
-        const detected = await detectLanguageWithApi(text);
-        const language = detected?.languages?.find(item => item.percentage >= 30);
-        const mappedLanguage = mapLanguageCode(language?.language);
-        return mappedLanguage || detectLanguageByText(text);
-    }
+        async function detectLanguageWithApi(text) {
+            if (usingBrowserApi && extensionApi.i18n?.detectLanguage) {
+                try {
+                    return await extensionApi.i18n.detectLanguage(text);
+                } catch (error) {
+                    return null;
+                }
+            }
 
-    function languageFamily(languageName) {
-        const language = String(languageName || "").toLowerCase();
-        if (language.includes("chinese")) return "zh";
-        if (language === "english") return "en";
-        if (language === "japanese") return "ja";
-        if (language === "korean") return "ko";
-        return language;
-    }
+            if (typeof chrome !== "undefined" && chrome.i18n?.detectLanguage) {
+                return new Promise(resolve => {
+                    chrome.i18n.detectLanguage(text, result => resolve(result || null));
+                });
+            }
 
-    function isSameLanguage(sourceLang, targetLang) {
-        return languageFamily(sourceLang) === languageFamily(targetLang);
-    }
+            return null;
+        }
 
-    function defaultReverseTarget(languageName) {
-        const family = languageFamily(languageName);
-        if (family === "zh") return "English";
-        return "Simplified Chinese";
-    }
+        function detectLanguageByText(text) {
+            if (/[\u3040-\u30ff]/.test(text)) return "Japanese";
+            if (/[\uac00-\ud7af]/.test(text)) return "Korean";
+            if (/[\u4e00-\u9fff]/.test(text)) return "Simplified Chinese";
+            if (/[\u0e00-\u0e7f]/.test(text)) return "Thai";
+            if (/[\u0600-\u06ff]/.test(text)) return "Arabic";
+            if (/[\u0400-\u04ff]/.test(text)) return "Russian";
+            if (/[ăđơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]/i.test(text)) return "Vietnamese";
+            return "English";
+        }
 
-    function resolveSelectionTarget(sourceLang, selectionConfig) {
-        const configuredSource = selectionConfig.sourceLang || "auto";
-        const configuredTarget = selectionConfig.targetLang || "Simplified Chinese";
-        let targetLang = configuredTarget;
+        async function detectSourceLanguage(text) {
+            const detected = await detectLanguageWithApi(text);
+            const language = detected?.languages?.find(item => item.percentage >= 30);
+            const mappedLanguage = mapLanguageCode(language?.language);
+            return mappedLanguage || detectLanguageByText(text);
+        }
 
-        if (configuredSource === "auto") {
-            if (isSameLanguage(sourceLang, configuredTarget)) {
+        function languageFamily(languageName) {
+            const language = String(languageName || "").toLowerCase();
+            if (language.includes("chinese")) return "zh";
+            return language;
+        }
+
+        function isSameLanguage(sourceLang, targetLang) {
+            return languageFamily(sourceLang) === languageFamily(targetLang);
+        }
+
+        function defaultReverseTarget(languageName) {
+            const family = languageFamily(languageName);
+            if (family === "zh") return "English";
+            return "Simplified Chinese";
+        }
+
+        function resolveSelectionTarget(sourceLang, selectionConfig) {
+            const configuredSource = selectionConfig.sourceLang || "auto";
+            const configuredTarget = selectionConfig.targetLang || "Simplified Chinese";
+            let targetLang = configuredTarget;
+
+            if (configuredSource === "auto") {
+                if (isSameLanguage(sourceLang, configuredTarget)) {
+                    targetLang = defaultReverseTarget(sourceLang);
+                }
+            } else if (isSameLanguage(sourceLang, configuredTarget)) {
+                targetLang = configuredSource;
+            } else if (isSameLanguage(sourceLang, configuredSource)) {
+                targetLang = configuredTarget;
+            }
+
+            if (isSameLanguage(sourceLang, targetLang)) {
                 targetLang = defaultReverseTarget(sourceLang);
             }
-        } else if (isSameLanguage(sourceLang, configuredTarget)) {
-            targetLang = configuredSource;
-        } else if (isSameLanguage(sourceLang, configuredSource)) {
-            targetLang = configuredTarget;
+
+            return targetLang;
         }
 
-        if (isSameLanguage(sourceLang, targetLang)) {
-            targetLang = defaultReverseTarget(sourceLang);
+        // ---------- Toast ----------
+
+        function showToast(message) {
+            const now = Date.now();
+            if (lastToast.message === message && now - lastToast.at < TOAST_DURATION_MS) return;
+            lastToast = { message, at: now };
+
+            let host = document.getElementById("rao-tr-toast-host");
+            if (!host) {
+                host = document.createElement("div");
+                host.id = "rao-tr-toast-host";
+                host.className = OWN_CLASS;
+                host.setAttribute("translate", "no");
+                host.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;";
+                const shadow = host.attachShadow({ mode: "open" });
+                // Built without innerHTML so pages that enforce Trusted Types still show it.
+                const style = document.createElement("style");
+                style.textContent = `div { font: 13px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: #fff; background: rgba(185, 28, 28, 0.95);
+                    padding: 10px 14px; border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.25); max-width: 320px; transition: opacity .2s; }`;
+                shadow.append(style, document.createElement("div"));
+                (document.body || document.documentElement).appendChild(host);
+            }
+
+            const box = host.shadowRoot.querySelector("div");
+            box.textContent = `翻译失败：${message}`;
+            box.style.opacity = "1";
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {
+                box.style.opacity = "0";
+            }, TOAST_DURATION_MS);
         }
 
-        return targetLang;
-    }
+        // ---------- Input field translation ----------
 
-    function isTextEditableElement(element) {
-        if (!element) return false;
-        if (element instanceof HTMLTextAreaElement) return true;
-        if (!(element instanceof HTMLInputElement)) return false;
+        function isTextEditableElement(element) {
+            if (!element) return false;
+            if (element instanceof HTMLTextAreaElement) return true;
+            if (!(element instanceof HTMLInputElement)) return false;
 
-        const textTypes = new Set([
-            "",
-            "email",
-            "number",
-            "password",
-            "search",
-            "tel",
-            "text",
-            "url"
-        ]);
-        return textTypes.has((element.type || "").toLowerCase());
-    }
-
-    function dispatchInputEvent(element, data) {
-        try {
-            element.dispatchEvent(new InputEvent("input", {
-                bubbles: true,
-                inputType: "insertReplacementText",
-                data
-            }));
-        } catch (error) {
-            element.dispatchEvent(new Event("input", { bubbles: true }));
+            const textTypes = new Set([
+                "",
+                "email",
+                "number",
+                "password",
+                "search",
+                "tel",
+                "text",
+                "url"
+            ]);
+            return textTypes.has((element.type || "").toLowerCase());
         }
-        element.dispatchEvent(new Event("change", { bubbles: true }));
-    }
 
-    function findContentEditableRoot(element) {
-        if (!element?.closest) return null;
-        return element.closest("[contenteditable]:not([contenteditable=\"false\"])");
-    }
+        function dispatchInputEvent(element, data) {
+            try {
+                element.dispatchEvent(new InputEvent("input", {
+                    bubbles: true,
+                    inputType: "insertReplacementText",
+                    data
+                }));
+            } catch (error) {
+                element.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+            element.dispatchEvent(new Event("change", { bubbles: true }));
+        }
 
-    function placeCaretAtEnd(element) {
-        const selection = window.getSelection();
-        if (!selection) return;
+        function findContentEditableRoot(element) {
+            if (!element?.closest) return null;
+            return element.closest("[contenteditable]:not([contenteditable=\"false\"])");
+        }
 
-        const range = document.createRange();
-        range.selectNodeContents(element);
-        range.collapse(false);
-        selection.removeAllRanges();
-        selection.addRange(range);
-    }
+        function placeCaretAtEnd(element) {
+            const selection = window.getSelection();
+            if (!selection) return;
 
-    function getFocusedEditableText() {
-        const element = document.activeElement;
-        if (isTextEditableElement(element)) {
-            const text = element.value;
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            range.collapse(false);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+
+        function getFocusedEditableText() {
+            const element = document.activeElement;
+            if (isTextEditableElement(element)) {
+                const text = element.value;
+                if (!text.trim()) return null;
+
+                return {
+                    text,
+                    replace: translatedText => {
+                        element.value = translatedText;
+                        element.focus();
+                        if (typeof element.setSelectionRange === "function") {
+                            element.setSelectionRange(translatedText.length, translatedText.length);
+                        }
+                        dispatchInputEvent(element, translatedText);
+                    }
+                };
+            }
+
+            const editableRoot = findContentEditableRoot(element);
+            if (!editableRoot) return null;
+
+            const text = editableRoot.innerText || editableRoot.textContent || "";
             if (!text.trim()) return null;
 
             return {
                 text,
                 replace: translatedText => {
-                    element.value = translatedText;
-                    element.focus();
-                    if (typeof element.setSelectionRange === "function") {
-                        element.setSelectionRange(translatedText.length, translatedText.length);
-                    }
-                    dispatchInputEvent(element, translatedText);
+                    editableRoot.textContent = translatedText;
+                    editableRoot.focus();
+                    placeCaretAtEnd(editableRoot);
+                    dispatchInputEvent(editableRoot, translatedText);
                 }
             };
         }
 
-        const editableRoot = findContentEditableRoot(element);
-        if (!editableRoot) return null;
+        async function translateFocusedInputText(selectionConfig) {
+            const editableInfo = getFocusedEditableText();
+            if (!editableInfo) return;
 
-        const text = editableRoot.innerText || editableRoot.textContent || "";
-        if (!text.trim()) return null;
+            const originalText = editableInfo.text;
+            const sourceLang = await detectSourceLanguage(originalText);
+            const targetLang = resolveSelectionTarget(sourceLang, selectionConfig);
 
-        return {
-            text,
-            replace: translatedText => {
-                editableRoot.textContent = translatedText;
-                editableRoot.focus();
-                placeCaretAtEnd(editableRoot);
-                dispatchInputEvent(editableRoot, translatedText);
-            }
-        };
-    }
-
-    function isCodeLikeStandaloneText(text) {
-        const value = text.trim();
-        if (!value || /\s/.test(value)) return false;
-
-        if (/^@[A-Za-z0-9][A-Za-z0-9_-]{1,38}$/.test(value)) return true;
-        if (/^--[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value)) return true;
-        if (/^[A-Z][A-Z0-9_]{1,12}$/.test(value)) return true;
-        if (/[\\/@]/.test(value)) return true;
-        if (/\.[A-Za-z0-9]{1,8}(?:[#?].*)?$/.test(value)) return true;
-        if (/[a-z][A-Z]/.test(value)) return true;
-        if (/[._]/.test(value) && /[A-Za-z]/.test(value)) return true;
-        if (/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+$/.test(value) && /[A-Z0-9]/.test(value)) return true;
-
-        return false;
-    }
-
-    function isGitHubPage() {
-        return location.hostname === "github.com" || location.hostname.endsWith(".github.com");
-    }
-
-    function isGitHubNonContentElement(element) {
-        if (!isGitHubPage() || !element?.closest) return false;
-
-        const githubChromeSelectors = [
-            "header",
-            "#repository-container-header",
-            "#repos-sticky-header",
-            "[data-testid=\"breadcrumbs\"]",
-            "[data-testid=\"breadcrumbs-filename\"]",
-            "[data-testid=\"blob-size\"]",
-            "[aria-label=\"File view\"]",
-            "[data-testid=\"raw-button\"]",
-            "[data-testid=\"copy-raw-button\"]",
-            "[data-testid=\"download-raw-button\"]",
-            "[data-testid^=\"more-file-actions-button\"]",
-            "[data-testid=\"latest-commit-details\"]",
-            "[data-testid=\"screen-reader-heading\"]",
-            ".js-file-line",
-            ".blob-code",
-            ".react-code-lines",
-            ".react-directory",
-            ".PRIVATE_TreeView",
-            "[aria-label=\"File Tree\"]",
-            "[data-testid=\"tree-browser\"]",
-            "[data-testid=\"file-tree\"]"
-        ].join(",");
-
-        if (element.closest(githubChromeSelectors)) return true;
-
-        const link = element.closest("a[href]");
-        if (!link) return false;
-
-        const href = link.getAttribute("href") || "";
-        return isCodeLikeStandaloneText(element.textContent || "")
-            && /(?:\/blob\/|\/tree\/|\/raw\/|\/commits\/|github\.com\/[^/]+\/[^/]+|\/[^/?#]+\.[A-Za-z0-9]{1,8}(?:[?#]|$))/i.test(href);
-    }
-
-    async function translateFocusedInputText() {
-        const editableInfo = getFocusedEditableText();
-        if (!editableInfo) return;
-
-        const originalText = editableInfo.text;
-        const sourceLang = await detectSourceLanguage(originalText);
-        const targetLang = resolveSelectionTarget(sourceLang, config);
-
-        try {
-            const response = await sendRuntimeMessage({
-                action: "translate",
-                payload: [
-                    {
-                        text: originalText.trim(),
-                        sourceLang
-                    }
-                ],
-                targetLang
-            });
-
-            const translatedText = response?.translatedArray?.[0];
-            if (translatedText) {
-                const leadingSpace = originalText.match(/^\s*/)?.[0] || "";
-                const trailingSpace = originalText.match(/\s*$/)?.[0] || "";
-                editableInfo.replace(leadingSpace + translatedText + trailingSpace);
-            } else {
-                console.error("Input translation failed:", response?.error || "Unknown response");
-            }
-        } catch (error) {
-            console.error("Input translation failed:", error);
-        }
-    }
-
-    function shouldTranslate(element, text) {
-        if (!element) return false;
-
-        if (element.offsetWidth === 0 && element.offsetHeight === 0) return false;
-        const style = window.getComputedStyle(element);
-        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
-
-        const blacklistedTags = "pre, code, kbd, samp, var, tt, script, style, noscript, math, input, textarea, select, canvas, svg, audio, video";
-        if (element.closest(blacklistedTags)) return false;
-
-        if (element.closest(".notranslate, [translate=\"no\"]")) return false;
-        if (element.closest(".katex, .MathJax, .mjx-chtml")) return false;
-        if (element.closest(".material-icons, [class^=\"fa-\"], [class*=\" fa-\"], [class^=\"icon-\"], [class*=\" icon-\"]")) return false;
-        if (isGitHubNonContentElement(element)) return false;
-
-        const trimmedText = text.trim();
-        const cleanText = trimmedText.replace(/\s+/g, "");
-
-        if (cleanText.length <= 2) return false;
-        if (isCodeLikeStandaloneText(trimmedText)) return false;
-        if (/^(https?:\/\/|ftp:\/\/|www\.)\S+$/i.test(trimmedText)) return false;
-        if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedText)) return false;
-        if (/^[\d.,\-+$€£¥₹\s:\/]+(AM|PM|am|pm)?$/.test(trimmedText)) return false;
-        if (!/[a-zA-Z0-9\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/.test(trimmedText)) return false;
-
-        return true;
-    }
-
-    function applyTextPreservingOuterWhitespace(node, text) {
-        const leadingSpace = node.nodeValue.match(/^\s*/)?.[0] || "";
-        const trailingSpace = node.nodeValue.match(/\s*$/)?.[0] || "";
-        node.nodeValue = leadingSpace + text + trailingSpace;
-    }
-
-    async function translatePage() {
-        if (!document.body) return;
-
-        if (action === "revert") {
-            for (const [node, texts] of window.__translatedNodesMap.entries()) {
-                if (document.body.contains(node)) {
-                    applyTextPreservingOuterWhitespace(node, texts.original);
-                }
-            }
-            window.__currentDisplay = "original";
-            return;
-        }
-
-        window.__currentDisplay = "translated";
-        window.__hasTranslated = true;
-
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-            acceptNode: node => {
-                return shouldTranslate(node.parentElement, node.nodeValue)
-                    ? NodeFilter.FILTER_ACCEPT
-                    : NodeFilter.FILTER_REJECT;
-            }
-        });
-
-        const textNodes = [];
-        let currentNode;
-        while ((currentNode = walker.nextNode())) {
-            textNodes.push(currentNode);
-        }
-
-        const MAX_BATCH_ITEMS = 10;
-        const MAX_BATCH_CHARS = 500;
-        const batches = [];
-        let currentBatch = [];
-        let currentBatchChars = 0;
-
-        for (const node of textNodes) {
-            const currentText = node.nodeValue.trim();
-
-            if (window.__translatedNodesMap.has(node)) {
-                const cache = window.__translatedNodesMap.get(node);
-                if (cache.translated) {
-                    if (window.__currentDisplay === "translated") {
-                        applyTextPreservingOuterWhitespace(node, cache.translated);
-                    }
-                    continue;
-                }
-                if (cache.status === "processing") {
-                    continue;
-                }
-            } else {
-                window.__translatedNodesMap.set(node, {
-                    original: currentText,
-                    translated: null,
-                    sourceLang: null,
-                    status: "processing"
+            try {
+                const response = await sendRuntimeMessage({
+                    action: "translate",
+                    payload: [
+                        {
+                            text: originalText.trim(),
+                            sourceLang
+                        }
+                    ],
+                    targetLang
                 });
-            }
 
-            const cache = window.__translatedNodesMap.get(node);
-            const sourceLang = config.sourceLang === "auto"
-                ? await detectSourceLanguage(cache.original)
-                : config.sourceLang;
-
-            cache.sourceLang = sourceLang;
-
-            if (isSameLanguage(sourceLang, config.targetLang)) {
-                cache.status = "skipped";
-                continue;
-            }
-
-            currentBatch.push(node);
-            currentBatchChars += cache.original.length;
-
-            if (currentBatch.length >= MAX_BATCH_ITEMS || currentBatchChars >= MAX_BATCH_CHARS) {
-                batches.push(currentBatch);
-                currentBatch = [];
-                currentBatchChars = 0;
+                const translatedText = response?.translatedArray?.[0];
+                if (translatedText) {
+                    const leadingSpace = originalText.match(/^\s*/)?.[0] || "";
+                    const trailingSpace = originalText.match(/\s*$/)?.[0] || "";
+                    editableInfo.replace(leadingSpace + translatedText + trailingSpace);
+                } else {
+                    showToast(response?.error || "没有拿到译文");
+                }
+            } catch (error) {
+                showToast(error.message || "扩展通信失败");
             }
         }
 
-        if (currentBatch.length > 0) {
-            batches.push(currentBatch);
+        // ---------- Text selection rules ----------
+
+        function isCodeLikeStandaloneText(text) {
+            const value = text.trim();
+            if (!value || /\s/.test(value)) return false;
+
+            if (/^@[A-Za-z0-9][A-Za-z0-9_-]{1,38}$/.test(value)) return true;
+            if (/^--[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value)) return true;
+            if (/^[A-Z][A-Z0-9_]{1,12}$/.test(value)) return true;
+            if (/[\\/@]/.test(value)) return true;
+            if (/\.[A-Za-z0-9]{1,8}(?:[#?].*)?$/.test(value)) return true;
+            if (/[a-z][A-Z]/.test(value)) return true;
+            if (/[._]/.test(value) && /[A-Za-z]/.test(value)) return true;
+            if (/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+$/.test(value) && /[A-Z0-9]/.test(value)) return true;
+
+            return false;
         }
 
-        const spinnerChars = ["|", "/", "-", "\\"];
-        const MAX_CONCURRENT = 2;
-        const activePromises = [];
+        function isGitHubPage() {
+            return location.hostname === "github.com" || location.hostname.endsWith(".github.com");
+        }
 
-        for (const batch of batches) {
-            const promise = processBatch(batch, config, spinnerChars).finally(() => {
-                activePromises.splice(activePromises.indexOf(promise), 1);
-            });
+        function isGitHubNonContentElement(element) {
+            if (!isGitHubPage() || !element?.closest) return false;
 
-            activePromises.push(promise);
+            const githubChromeSelectors = [
+                "header",
+                "#repository-container-header",
+                "#repos-sticky-header",
+                "[data-testid=\"breadcrumbs\"]",
+                "[data-testid=\"breadcrumbs-filename\"]",
+                "[data-testid=\"blob-size\"]",
+                "[aria-label=\"File view\"]",
+                "[data-testid=\"raw-button\"]",
+                "[data-testid=\"copy-raw-button\"]",
+                "[data-testid=\"download-raw-button\"]",
+                "[data-testid^=\"more-file-actions-button\"]",
+                "[data-testid=\"latest-commit-details\"]",
+                "[data-testid=\"screen-reader-heading\"]",
+                ".js-file-line",
+                ".blob-code",
+                ".react-code-lines",
+                ".react-directory",
+                ".PRIVATE_TreeView",
+                "[aria-label=\"File Tree\"]",
+                "[data-testid=\"tree-browser\"]",
+                "[data-testid=\"file-tree\"]"
+            ].join(",");
 
-            if (activePromises.length >= MAX_CONCURRENT) {
-                await Promise.race(activePromises);
+            if (element.closest(githubChromeSelectors)) return true;
+
+            const link = element.closest("a[href]");
+            if (!link) return false;
+
+            const href = link.getAttribute("href") || "";
+            // File and folder names in repository listings, even plain words like "examples".
+            const linkText = (element.textContent || "").trim();
+            const lastPathSegment = href.split(/[?#]/)[0].split("/").filter(Boolean).pop() || "";
+            let decodedSegment = lastPathSegment;
+            try {
+                decodedSegment = decodeURIComponent(lastPathSegment);
+            } catch (error) {
+                // Keep the raw segment when the URL is not valid percent-encoding.
             }
+            if (/\/(?:blob|tree)\//.test(href) && linkText && linkText === decodedSegment) return true;
+
+            return isCodeLikeStandaloneText(element.textContent || "")
+                && /(?:\/blob\/|\/tree\/|\/raw\/|\/commits\/|github\.com\/[^/]+\/[^/]+|\/[^/?#]+\.[A-Za-z0-9]{1,8}(?:[?#]|$))/i.test(href);
         }
 
-        await Promise.all(activePromises);
-    }
+        function isExcludedElement(element) {
+            return !element || element.closest(EXCLUDED_SELECTOR) !== null || isGitHubNonContentElement(element);
+        }
 
-    async function processBatch(batchNodes, batchConfig, spinnerChars) {
-        const payload = batchNodes.map(node => {
-            const cache = window.__translatedNodesMap.get(node);
+        function isTranslatableText(text) {
+            const trimmedText = text.trim();
+            const cleanText = trimmedText.replace(/\s+/g, "");
+
+            if (cleanText.length <= 2) return false;
+            if (isCodeLikeStandaloneText(trimmedText)) return false;
+            if (/^(https?:\/\/|ftp:\/\/|www\.)\S+$/i.test(trimmedText)) return false;
+            if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedText)) return false;
+            if (/^[\d.,\-+$€£¥₹\s:\/]+(AM|PM|am|pm)?$/.test(trimmedText)) return false;
+            if (!/[a-zA-Z0-9\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0e00-\u0e7f\u0600-\u06ff]/.test(trimmedText)) return false;
+
+            return true;
+        }
+
+        function originalValueOf(node) {
+            const record = textRecords.get(node);
+            if (record && node.nodeValue === record.translated) return record.original;
+            return node.nodeValue;
+        }
+
+        function isCandidateText(node) {
+            if (isExcludedElement(node.parentElement)) return false;
+            return isTranslatableText(originalValueOf(node));
+        }
+
+        function isOwnNode(node) {
+            const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+            return !!element?.closest?.(`.${OWN_CLASS}`);
+        }
+
+        function displayOf(element) {
+            return window.getComputedStyle(element).display;
+        }
+
+        function isInlineDisplay(display) {
+            return display === "inline" || display === "contents";
+        }
+
+        function findUnitRoot(element) {
+            let current = element;
+            while (current && current !== document.body && current !== document.documentElement) {
+                if (!isInlineDisplay(displayOf(current))) return current;
+                current = current.parentElement;
+            }
+            return document.body;
+        }
+
+        // ---------- Unit serialization ----------
+
+        // Inline markup becomes <gN>...</gN>; anything kept as-is (code, icons, nested blocks) becomes <xN/>.
+        function hasCandidateTextInline(element) {
+            for (const child of element.childNodes) {
+                if (child.nodeType === Node.TEXT_NODE) {
+                    if (isCandidateText(child)) return true;
+                } else if (child.nodeType === Node.ELEMENT_NODE) {
+                    if (child.matches(EXCLUDED_SELECTOR) || isGitHubNonContentElement(child)) continue;
+                    const display = displayOf(child);
+                    if (display === "none" || !isInlineDisplay(display)) continue;
+                    if (hasCandidateTextInline(child)) return true;
+                }
+            }
+            return false;
+        }
+
+        function serializeUnit(root) {
+            const containers = new Map();
+            const parentOf = new Map();
+            const atomicText = new Map();
+            const snapshot = new Map();
+            let nextId = 1;
+
+            function walk(element, containerId) {
+                const container = { element, runs: [[]] };
+                containers.set(containerId, container);
+                let out = "";
+
+                for (const child of element.childNodes) {
+                    if (child.nodeType === Node.TEXT_NODE) {
+                        const value = originalValueOf(child);
+                        container.runs[container.runs.length - 1].push(child);
+                        snapshot.set(child, value);
+                        out += value;
+                        continue;
+                    }
+
+                    if (child.nodeType !== Node.ELEMENT_NODE || child.classList.contains(OWN_CLASS)) continue;
+
+                    const display = displayOf(child);
+                    if (display === "none") continue;
+
+                    const id = nextId++;
+                    container.runs.push([]);
+
+                    const keepAsIs = child.matches(EXCLUDED_SELECTOR)
+                        || isGitHubNonContentElement(child)
+                        || !isInlineDisplay(display)
+                        || !hasCandidateTextInline(child);
+
+                    if (keepAsIs) {
+                        atomicText.set(id, child.tagName === "BR" ? " " : (child.textContent || ""));
+                        out += `<x${id}/>`;
+                    } else {
+                        parentOf.set(id, containerId);
+                        out += `<g${id}>${walk(child, id)}</g${id}>`;
+                    }
+                }
+
+                return out;
+            }
+
+            const text = walk(root, 0).replace(/\s+/g, " ").trim();
             return {
-                text: cache.original,
-                sourceLang: cache.sourceLang || "English"
+                text,
+                containers,
+                parentOf,
+                atomicText,
+                snapshot,
+                tagCount: nextId - 1
             };
-        });
-        const spinners = [];
-
-        batchNodes.forEach(node => {
-            if (window.__currentDisplay === "translated" && node.parentElement) {
-                const spinnerSpan = document.createElement("span");
-                spinnerSpan.style.marginLeft = "5px";
-                spinnerSpan.style.fontFamily = "monospace";
-                spinnerSpan.style.color = "#ff5722";
-                spinnerSpan.style.fontWeight = "bold";
-                node.parentElement.appendChild(spinnerSpan);
-                spinners.push(spinnerSpan);
-            }
-        });
-
-        let spinnerIdx = 0;
-        let spinnerInterval = null;
-        if (spinners.length > 0) {
-            spinnerInterval = setInterval(() => {
-                const char = spinnerChars[spinnerIdx % spinnerChars.length];
-                spinners.forEach(span => {
-                    span.innerText = char;
-                });
-                spinnerIdx++;
-            }, 100);
         }
 
-        try {
-            const response = await sendRuntimeMessage({
-                action: "translate",
-                payload,
-                targetLang: batchConfig.targetLang
+        function plainTextOf(taggedText, atomicText) {
+            return taggedText
+                .replace(/<x(\d+)\/>/g, (match, id) => atomicText.get(Number(id)) || "")
+                .replace(/<\/?g\d+>/g, "")
+                .replace(/\s+/g, " ")
+                .trim();
+        }
+
+        function parseTaggedTranslation(translation, model) {
+            const root = { id: 0, segments: [""] };
+            const parsed = new Map([[0, root]]);
+            const parentOf = new Map();
+            const stack = [root];
+            const tokenPattern = /<(\/?)([gx])(\d+)(\/?)>/g;
+            let cursor = 0;
+            let match;
+
+            while ((match = tokenPattern.exec(translation))) {
+                const top = stack[stack.length - 1];
+                top.segments[top.segments.length - 1] += translation.slice(cursor, match.index);
+                cursor = tokenPattern.lastIndex;
+
+                const [, closing, kind, rawId, selfClosing] = match;
+                const id = Number(rawId);
+
+                if (kind === "x") {
+                    if (closing) continue;
+                    top.segments.push("");
+                    continue;
+                }
+
+                if (selfClosing) return null;
+
+                if (!closing) {
+                    if (parsed.has(id)) return null;
+                    const node = { id, segments: [""] };
+                    parsed.set(id, node);
+                    parentOf.set(id, top.id);
+                    top.segments.push("");
+                    stack.push(node);
+                } else {
+                    if (top.id !== id || stack.length === 1) return null;
+                    stack.pop();
+                }
+            }
+
+            if (stack.length !== 1) return null;
+            stack[0].segments[stack[0].segments.length - 1] += translation.slice(cursor);
+
+            if (parentOf.size !== model.parentOf.size) return null;
+            for (const [id, parentId] of model.parentOf) {
+                if (parentOf.get(id) !== parentId) return null;
+            }
+
+            return parsed;
+        }
+
+        // Maps translated text back onto the existing text nodes; elements stay where they are.
+        function assignTaggedTranslation(translation, model) {
+            const parsed = parseTaggedTranslation(translation, model);
+            if (!parsed) return null;
+
+            const assignments = new Map();
+
+            for (const [id, container] of model.containers) {
+                const segments = parsed.get(id).segments;
+                const runs = container.runs;
+                const values = runs.map(() => "");
+                const hasNodes = runs.map(run => run.length > 0);
+
+                if (segments.length === runs.length) {
+                    let carry = "";
+                    let lastWithNodes = -1;
+                    segments.forEach((segment, index) => {
+                        if (hasNodes[index]) {
+                            values[index] = carry + segment;
+                            carry = "";
+                            lastWithNodes = index;
+                        } else if (lastWithNodes >= 0) {
+                            values[lastWithNodes] += segment;
+                        } else {
+                            carry += segment;
+                        }
+                    });
+                    if (carry.trim()) return null;
+                } else {
+                    const firstWithNodes = hasNodes.indexOf(true);
+                    const joined = segments.join("");
+                    if (firstWithNodes === -1) {
+                        if (joined.trim()) return null;
+                    } else {
+                        values[firstWithNodes] = joined;
+                    }
+                }
+
+                runs.forEach((run, index) => {
+                    run.forEach((node, nodeIndex) => {
+                        assignments.set(node, nodeIndex === 0 ? values[index] : "");
+                    });
+                });
+            }
+
+            // Keep the paragraph's outer whitespace so it still sits correctly next to its siblings.
+            const ordered = [...model.snapshot.keys()];
+            const firstNode = ordered.find(node => assignments.get(node));
+            const lastNode = [...ordered].reverse().find(node => assignments.get(node));
+            if (firstNode) {
+                const leading = model.snapshot.get(firstNode).match(/^\s*/)[0];
+                assignments.set(firstNode, leading + assignments.get(firstNode).trimStart());
+            }
+            if (lastNode) {
+                const trailing = model.snapshot.get(lastNode).match(/\s*$/)[0];
+                assignments.set(lastNode, assignments.get(lastNode).trimEnd() + trailing);
+            }
+
+            return assignments;
+        }
+
+        function withOuterWhitespace(original, text) {
+            const leadingSpace = original.match(/^\s*/)?.[0] || "";
+            const trailingSpace = original.match(/\s*$/)?.[0] || "";
+            return leadingSpace + text + trailingSpace;
+        }
+
+        // ---------- Units ----------
+
+        function getOrCreateUnit(root) {
+            let unit = units.get(root);
+            if (!unit) {
+                unit = {
+                    root,
+                    status: "idle",
+                    mode: "tagged",
+                    model: null,
+                    items: [],
+                    result: null,
+                    bilingualElement: null,
+                    spinner: null,
+                    changedWhileProcessing: false
+                };
+                units.set(root, unit);
+                watchUnit(unit);
+            }
+            return unit;
+        }
+
+        function watchUnit(unit) {
+            intersectionObserver.unobserve(unit.root);
+            intersectionObserver.observe(unit.root);
+        }
+
+        function markUnitChanged(unit) {
+            if (unit.status === "processing" || unit.status === "queued") {
+                unit.changedWhileProcessing = true;
+                return;
+            }
+            if (unit.status === "idle") return;
+
+            unit.status = "idle";
+            watchUnit(unit);
+        }
+
+        function unitHasChanged(unit, node) {
+            if (!unit.model) return false;
+            if (!unit.model.snapshot.has(node)) return true;
+            return unit.model.snapshot.get(node) !== originalValueOf(node);
+        }
+
+        function scan(rootNode) {
+            const root = rootNode.nodeType === Node.TEXT_NODE ? rootNode.parentElement : rootNode;
+            if (!root || !root.isConnected || isOwnNode(root)) return;
+
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+                acceptNode: node => (isCandidateText(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT)
             });
 
-            if (spinnerInterval) clearInterval(spinnerInterval);
-            spinners.forEach(span => span.remove());
+            let node;
+            while ((node = walker.nextNode())) {
+                const unit = getOrCreateUnit(findUnitRoot(node.parentElement));
+                if (unitHasChanged(unit, node)) markUnitChanged(unit);
+            }
+        }
 
-            if (response?.translatedArray) {
-                const translatedArray = response.translatedArray;
-                for (let i = 0; i < batchNodes.length; i++) {
-                    const node = batchNodes[i];
-                    const cache = window.__translatedNodesMap.get(node);
-                    const translatedText = translatedArray[i] || cache.original;
+        function prepareUnit(unit) {
+            const model = serializeUnit(unit.root);
+            unit.model = model;
 
-                    cache.translated = translatedText;
-                    cache.status = "done";
+            if (model.text.length <= MAX_UNIT_CHARS && model.tagCount <= MAX_UNIT_TAGS && unit.mode === "tagged") {
+                unit.items = [model.text];
+                return plainTextOf(model.text, model.atomicText);
+            }
 
-                    if (window.__currentDisplay === "translated") {
-                        applyTextPreservingOuterWhitespace(node, translatedText);
-                    }
+            unit.mode = "nodes";
+            unit.nodeTargets = [...model.snapshot.keys()].filter(node => isCandidateText(node));
+            unit.items = unit.nodeTargets.map(node => model.snapshot.get(node).replace(/\s+/g, " ").trim());
+            return unit.items.join(" ");
+        }
+
+        function buildResult(unit, translations) {
+            const model = unit.model;
+
+            if (unit.mode === "tagged") {
+                const assignments = assignTaggedTranslation(translations[0], model);
+                if (!assignments) return null;
+                return {
+                    assignments,
+                    bilingualText: plainTextOf(translations[0], model.atomicText),
+                    originalText: plainTextOf(model.text, model.atomicText)
+                };
+            }
+
+            const assignments = new Map();
+            unit.nodeTargets.forEach((node, index) => {
+                assignments.set(node, withOuterWhitespace(model.snapshot.get(node), translations[index]));
+            });
+            return {
+                assignments,
+                bilingualText: translations.join(" "),
+                originalText: unit.items.join(" ")
+            };
+        }
+
+        function isUnitStale(unit) {
+            for (const [node, value] of unit.model.snapshot) {
+                if (!node.isConnected || originalValueOf(node) !== value) return true;
+            }
+            return false;
+        }
+
+        // ---------- Display ----------
+
+        function showTranslated(unit) {
+            if (!unit.result) return;
+
+            if (activeConfig.displayMode === "bilingual") {
+                showBilingual(unit);
+                return;
+            }
+
+            for (const [node, value] of unit.result.assignments) {
+                let record = textRecords.get(node);
+                if (!record || node.nodeValue !== record.translated) {
+                    record = { original: node.nodeValue, translated: value };
+                    textRecords.set(node, record);
+                } else {
+                    record.translated = value;
+                }
+                if (node.nodeValue !== value) node.nodeValue = value;
+            }
+        }
+
+        function showBilingual(unit) {
+            const { bilingualText, originalText } = unit.result;
+            if (!bilingualText || bilingualText === originalText) return;
+
+            let element = unit.bilingualElement;
+            if (!element) {
+                element = document.createElement("font");
+                element.className = `${OWN_CLASS} rao-tr-bilingual`;
+                element.setAttribute("translate", "no");
+                const isBlock = originalText.length > 40 || /[.!?。！？]\s*$/.test(originalText);
+                element.style.cssText = isBlock
+                    ? "display:block;margin-top:0.25em;opacity:0.85;"
+                    : "margin-left:0.4em;opacity:0.85;";
+                unit.bilingualElement = element;
+            }
+            element.textContent = bilingualText;
+            if (element.parentNode !== unit.root) unit.root.appendChild(element);
+        }
+
+        function showOriginal(unit) {
+            unit.bilingualElement?.remove();
+            if (!unit.result) return;
+
+            for (const node of unit.result.assignments.keys()) {
+                const record = textRecords.get(node);
+                if (record && node.nodeValue === record.translated) {
+                    node.nodeValue = record.original;
+                }
+            }
+        }
+
+        function setSpinner(unit, visible) {
+            if (!visible) {
+                unit.spinner?.remove();
+                unit.spinner = null;
+                if (![...units.values()].some(item => item.spinner)) {
+                    clearInterval(spinnerTimer);
+                    spinnerTimer = null;
                 }
                 return;
             }
 
-            console.error("Translation failed:", response?.error || "Unknown response");
-            batchNodes.forEach(node => {
-                window.__translatedNodesMap.get(node).status = "error";
-            });
-        } catch (error) {
-            if (spinnerInterval) clearInterval(spinnerInterval);
-            spinners.forEach(span => span.remove());
-            batchNodes.forEach(node => {
-                window.__translatedNodesMap.get(node).status = "error";
-            });
-            console.error("Batch translation failed:", error);
-        }
-    }
+            if (unit.spinner || window.__currentDisplay !== "translated") return;
+            const spinner = document.createElement("span");
+            spinner.className = `${OWN_CLASS} rao-tr-spinner`;
+            spinner.setAttribute("translate", "no");
+            spinner.style.cssText = "margin-left:5px;font-family:monospace;color:#ff5722;font-weight:bold;";
+            spinner.textContent = SPINNER_CHARS[spinnerIndex % SPINNER_CHARS.length];
+            unit.root.appendChild(spinner);
+            unit.spinner = spinner;
 
-    if (action === "translate-selection") {
-        await translateFocusedInputText();
-    } else {
-        await translatePage();
+            if (!spinnerTimer) {
+                spinnerTimer = setInterval(() => {
+                    spinnerIndex++;
+                    const char = SPINNER_CHARS[spinnerIndex % SPINNER_CHARS.length];
+                    units.forEach(item => {
+                        if (item.spinner) item.spinner.textContent = char;
+                    });
+                }, 100);
+            }
+        }
+
+        // ---------- Scheduling ----------
+
+        function onIntersection(entries) {
+            if (window.__currentDisplay !== "translated") return;
+
+            for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                const unit = units.get(entry.target);
+                if (!unit || unit.status !== "idle") continue;
+                intersectionObserver.unobserve(entry.target);
+                enqueue(unit);
+            }
+        }
+
+        function onMutations(mutations) {
+            for (const mutation of mutations) {
+                if (mutation.type === "characterData") {
+                    const node = mutation.target;
+                    if (isOwnNode(node)) continue;
+                    const record = textRecords.get(node);
+                    if (record && (node.nodeValue === record.translated || node.nodeValue === record.original)) continue;
+                    pendingScanRoots.add(node);
+                    continue;
+                }
+
+                mutation.addedNodes.forEach(node => {
+                    if (!isOwnNode(node)) pendingScanRoots.add(node);
+                });
+            }
+
+            if (pendingScanRoots.size > 0 && !scanTimer) {
+                scanTimer = setTimeout(() => {
+                    scanTimer = null;
+                    const roots = [...pendingScanRoots];
+                    pendingScanRoots.clear();
+                    if (window.__currentDisplay !== "translated") return;
+                    roots.forEach(scan);
+                }, SCAN_DELAY_MS);
+            }
+        }
+
+        function enqueue(unit) {
+            unit.status = "queued";
+            queue.push(unit);
+            if (!flushTimer) {
+                flushTimer = setTimeout(flushQueue, FLUSH_DELAY_MS);
+            }
+        }
+
+        async function flushQueue() {
+            flushTimer = null;
+            const pending = queue.splice(0);
+            const ready = [];
+
+            for (const unit of pending) {
+                if (!unit.root.isConnected) {
+                    units.delete(unit.root);
+                    continue;
+                }
+
+                unit.changedWhileProcessing = false;
+                const plainText = prepareUnit(unit);
+                const sourceLang = activeConfig.sourceLang === "auto"
+                    ? await detectSourceLanguage(plainText)
+                    : activeConfig.sourceLang;
+
+                if (unit.items.length === 0 || !isTranslatableText(plainText) || isSameLanguage(sourceLang, activeConfig.targetLang)) {
+                    unit.status = "skipped";
+                    continue;
+                }
+                ready.push(unit);
+            }
+
+            let batch = [];
+            let batchItems = 0;
+            let batchChars = 0;
+            for (const unit of ready) {
+                const unitChars = unit.items.reduce((sum, item) => sum + item.length, 0);
+                if (batch.length > 0 && (batchItems + unit.items.length > BATCH_MAX_ITEMS || batchChars + unitChars > BATCH_MAX_CHARS)) {
+                    runBatch(batch);
+                    batch = [];
+                    batchItems = 0;
+                    batchChars = 0;
+                }
+                batch.push(unit);
+                batchItems += unit.items.length;
+                batchChars += unitChars;
+            }
+            if (batch.length > 0) runBatch(batch);
+        }
+
+        async function runBatch(batchUnits) {
+            if (activeBatches >= MAX_CONCURRENT_BATCHES) {
+                await new Promise(resolve => waitingBatches.push(resolve));
+            }
+            activeBatches++;
+
+            const targetLang = activeConfig.targetLang;
+            batchUnits.forEach(unit => {
+                unit.status = "processing";
+                setSpinner(unit, true);
+            });
+
+            try {
+                const response = await sendRuntimeMessage({
+                    action: "translate",
+                    payload: batchUnits.flatMap(unit => unit.items),
+                    targetLang
+                });
+
+                if (!response?.translatedArray) {
+                    throw new Error(response?.error || "没有拿到译文");
+                }
+
+                // The user switched language while this batch was running.
+                if (targetLang !== activeConfig.targetLang) {
+                    batchUnits.forEach(unit => {
+                        unit.status = "idle";
+                        watchUnit(unit);
+                    });
+                    return;
+                }
+
+                let offset = 0;
+                for (const unit of batchUnits) {
+                    const translations = response.translatedArray.slice(offset, offset + unit.items.length);
+                    offset += unit.items.length;
+                    finishUnit(unit, translations);
+                }
+            } catch (error) {
+                batchUnits.forEach(unit => {
+                    unit.status = "error";
+                });
+                showToast(error.message || "扩展通信失败");
+            } finally {
+                batchUnits.forEach(unit => setSpinner(unit, false));
+                activeBatches--;
+                const next = waitingBatches.shift();
+                if (next) next();
+            }
+        }
+
+        function finishUnit(unit, translations) {
+            if (unit.changedWhileProcessing || isUnitStale(unit)) {
+                unit.changedWhileProcessing = false;
+                unit.status = "idle";
+                watchUnit(unit);
+                return;
+            }
+
+            const result = buildResult(unit, translations);
+            if (!result) {
+                // The model broke the inline tags; translate this paragraph node by node instead.
+                unit.mode = "nodes";
+                unit.status = "idle";
+                enqueue(unit);
+                return;
+            }
+
+            unit.result = result;
+            unit.status = "done";
+            if (window.__currentDisplay === "translated") {
+                showTranslated(unit);
+            }
+        }
+
+        // ---------- Actions ----------
+
+        function revertPage() {
+            window.__currentDisplay = "original";
+            mutationObserver.disconnect();
+            clearTimeout(scanTimer);
+            scanTimer = null;
+            pendingScanRoots.clear();
+            units.forEach(unit => {
+                showOriginal(unit);
+                setSpinner(unit, false);
+            });
+        }
+
+        function translatePage(nextConfig) {
+            if (!document.body) return;
+
+            const languageChanged = activeConfig
+                && (activeConfig.targetLang !== nextConfig.targetLang || activeConfig.sourceLang !== nextConfig.sourceLang);
+            const modeChanged = activeConfig && activeConfig.displayMode !== nextConfig.displayMode;
+
+            if (languageChanged || modeChanged) {
+                units.forEach(showOriginal);
+            }
+            if (languageChanged) {
+                units.forEach(unit => {
+                    unit.result = null;
+                    unit.mode = "tagged";
+                    unit.status = "idle";
+                });
+            }
+
+            activeConfig = nextConfig;
+            window.__currentDisplay = "translated";
+            window.__hasTranslated = true;
+
+            units.forEach(unit => {
+                if (!unit.root.isConnected) {
+                    units.delete(unit.root);
+                    return;
+                }
+                if (unit.status === "done") showTranslated(unit);
+                if (unit.status === "error") unit.status = "idle";
+                if (unit.status === "idle") watchUnit(unit);
+            });
+
+            scan(document.body);
+            mutationObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+        }
+
+        async function run(nextAction, nextConfig) {
+            if (nextAction === "translate-selection") {
+                await translateFocusedInputText(nextConfig);
+                return;
+            }
+
+            if (nextAction === "revert") {
+                revertPage();
+                return;
+            }
+
+            translatePage(nextConfig);
+        }
+
+        return { run };
     }
 })();

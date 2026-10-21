@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Rao DeepSeek Translate",
   "description": "Use DeepSeek to translate the current Safari page.",
-  "version": "2.2",
+  "version": "3.0",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
